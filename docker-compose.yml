@@ -1,0 +1,14 @@
+services:
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: routewise
+      POSTGRES_PASSWORD: routewise
+      POSTGRES_DB: routewise
+    ports:
+      - "5432:5432"
