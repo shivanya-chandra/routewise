@@ -80,6 +80,11 @@ def test_add_route_log_maps_dataclasses_to_sqlalchemy_rows() -> None:
         cache_hit=False,
         request_status="success",
         cache_bypassed=True,
+        semantic_cache_hit=True,
+        semantic_cache_input_hash="source-hash",
+        semantic_cache_score=Decimal("0.98"),
+        semantic_cache_method="hash_embedding",
+        routing_policy="quality_first",
         prompt_tokens=10,
         completion_tokens=5,
         total_tokens=15,
@@ -120,6 +125,11 @@ def test_add_route_log_maps_dataclasses_to_sqlalchemy_rows() -> None:
     assert session.objects[0].id == request_id
     assert session.objects[0].request_status == "success"
     assert session.objects[0].cache_bypassed is True
+    assert session.objects[0].semantic_cache_hit is True
+    assert session.objects[0].semantic_cache_input_hash == "source-hash"
+    assert session.objects[0].semantic_cache_score == Decimal("0.98")
+    assert session.objects[0].semantic_cache_method == "hash_embedding"
+    assert session.objects[0].routing_policy == "quality_first"
     assert session.objects[0].preflight_estimated_total_tokens == 268
     assert session.objects[0].preflight_estimated_cost_usd == Decimal("0.004")
     assert session.objects[0].budget_status == "within_budget"

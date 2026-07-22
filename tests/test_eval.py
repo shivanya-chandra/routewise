@@ -8,6 +8,7 @@ def test_build_summary_calculates_rates_tokens_cost_and_latency() -> None:
         {
             "total_requests": 4,
             "cache_hits": 1,
+            "semantic_cache_hits": 1,
             "cache_bypassed_requests": 1,
             "blocked_requests": 1,
             "budget_exceeded_requests": 1,
@@ -30,6 +31,8 @@ def test_build_summary_calculates_rates_tokens_cost_and_latency() -> None:
 
     assert summary.total_requests == 4
     assert summary.cache_hit_rate == 0.25
+    assert summary.exact_cache_hits == 0
+    assert summary.semantic_cache_hits == 1
     assert summary.cache_bypassed_requests == 1
     assert summary.blocked_requests == 1
     assert summary.budget_exceeded_requests == 1

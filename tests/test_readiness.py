@@ -3,7 +3,7 @@ import asyncio
 from fastapi import Response
 
 from app.core.model_client import ollama_model_available
-from app.main import readiness, readiness_status
+from app.main import missing_database_tables, readiness, readiness_status
 from app.schemas import ReadinessCheck
 
 
@@ -30,6 +30,18 @@ def test_readiness_status_is_not_ready_when_any_check_errors() -> None:
 
 def test_ollama_model_available_accepts_latest_tag() -> None:
     assert ollama_model_available("ollama/llama3.2", ["llama3.2:latest"])
+
+
+def test_database_readiness_detects_missing_tables() -> None:
+    missing = missing_database_tables(
+        {
+            "llm_requests": "llm_requests",
+            "llm_calls": None,
+            "cache_entries": "cache_entries",
+        }
+    )
+
+    assert missing == ["llm_calls"]
 
 
 def test_readiness_endpoint_returns_ready_when_required_checks_pass(monkeypatch) -> None:

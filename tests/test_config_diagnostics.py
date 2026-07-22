@@ -12,6 +12,10 @@ class FakeSettings:
     frontier_model: str = "gpt-4o"
     model_prices_json: str = ""
     openai_api_key: str = ""
+    app_environment: str = "development"
+    routewise_api_key: str = ""
+    cache_backend: str = "memory"
+    request_logging_enabled: bool = False
 
 
 def test_config_diagnostics_reports_missing_paid_model_setup() -> None:
@@ -58,3 +62,20 @@ def test_config_diagnostics_endpoint_returns_issue_rows(monkeypatch) -> None:
     assert response.status == "needs_attention"
     assert len(response.issues) == 3
     assert response.issues[0].code == "missing_model_price"
+
+
+def test_config_diagnostics_reports_unsafe_production_defaults() -> None:
+    diagnostics = build_config_diagnostics(
+        FakeSettings(
+            model_prices_json=(
+                '{"gpt-4o-mini": ["0.01", "0.02"], "gpt-4o": ["0.03", "0.06"]}'
+            ),
+            openai_api_key="test-key",
+            app_environment="production",
+        )
+    )
+
+    codes = {issue.code for issue in diagnostics.issues}
+    assert "missing_routewise_api_key" in codes
+    assert "in_memory_production_cache" in codes
+    assert "production_logging_disabled" in codes

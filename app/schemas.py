@@ -1,19 +1,25 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ChatMessage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     role: Literal["system", "user", "assistant"]
-    content: str = Field(min_length=1)
+    content: str = Field(min_length=1, max_length=100_000)
 
 
 class RouteRequest(BaseModel):
-    user_id: str | None = None
-    messages: list[ChatMessage] = Field(min_length=1)
+    model_config = ConfigDict(extra="forbid")
+
+    user_id: str | None = Field(default=None, max_length=200)
+    messages: list[ChatMessage] = Field(min_length=1, max_length=100)
     quality_target: float = Field(default=0.90, ge=0.0, le=1.0)
     max_cost_tier: Literal["small", "medium", "frontier"] = "frontier"
     bypass_cache: bool = False
+    allow_semantic_cache: bool = False
+    routing_policy: Literal["balanced", "cost_first", "quality_first"] = "balanced"
     max_estimated_cost_usd: float | None = Field(default=None, ge=0.0)
 
 
@@ -24,10 +30,16 @@ class RouteResponse(BaseModel):
     final_model: str
     cache_hit: bool
     cache_bypassed: bool = False
+    response_cached: bool = False
+    semantic_cache_hit: bool = False
+    semantic_cache_input_hash: str | None = None
+    semantic_cache_score: float | None = None
+    semantic_cache_method: str | None = None
     fallback_count: int
     fallback_skipped: bool = False
     fallback_skip_reason: str | None = None
     route_reason: str
+    routing_policy: str = "balanced"
     quality_score: float | None = None
     quality_label: str | None = None
     quality_reason: str | None = None
@@ -53,6 +65,9 @@ class RoutePreviewResponse(BaseModel):
     semantic_cache_input_hash: str | None = None
     semantic_cache_score: float | None = None
     semantic_cache_reason: str | None = None
+    semantic_cache_method: str | None = None
+    semantic_cache_reuse_eligible: bool = False
+    routing_policy: str = "balanced"
     prompt_compressed: bool = False
     original_prompt_words: int | None = None
     compressed_prompt_words: int | None = None
@@ -81,6 +96,9 @@ class RouteEstimateResponse(BaseModel):
     semantic_cache_input_hash: str | None = None
     semantic_cache_score: float | None = None
     semantic_cache_reason: str | None = None
+    semantic_cache_method: str | None = None
+    semantic_cache_reuse_eligible: bool = False
+    routing_policy: str = "balanced"
     prompt_compressed: bool = False
     original_prompt_words: int | None = None
     compressed_prompt_words: int | None = None
@@ -91,6 +109,8 @@ class RouteEstimateResponse(BaseModel):
 class MetricsSummaryResponse(BaseModel):
     total_requests: int
     cache_hits: int
+    exact_cache_hits: int = 0
+    semantic_cache_hits: int = 0
     cache_hit_rate: float
     cache_bypassed_requests: int = 0
     compressed_requests: int
@@ -161,6 +181,7 @@ class RoutingDecisionItem(BaseModel):
     selected_model: str
     final_model: str
     cache_hit: bool
+    semantic_cache_hit: bool = False
     request_count: int
     request_rate: float
     total_fallbacks: int
@@ -213,6 +234,11 @@ class RequestHistoryItem(BaseModel):
     request_status: str = "success"
     cache_hit: bool
     cache_bypassed: bool = False
+    semantic_cache_hit: bool = False
+    semantic_cache_input_hash: str | None = None
+    semantic_cache_score: str | None = None
+    semantic_cache_method: str | None = None
+    routing_policy: str = "balanced"
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     total_tokens: int | None = None
@@ -241,3 +267,18 @@ class RequestHistoryItem(BaseModel):
 
 class RequestHistoryResponse(BaseModel):
     requests: list[RequestHistoryItem]
+
+
+class MetricsRecommendation(BaseModel):
+    severity: Literal["info", "warning"]
+    code: str
+    message: str
+
+
+class MetricsReportResponse(BaseModel):
+    generated_at: str
+    summary: MetricsSummaryResponse
+    models: list[ModelUsageItem]
+    routes: list[RoutingDecisionItem]
+    recent_requests: list[RequestHistoryItem]
+    recommendations: list[MetricsRecommendation]

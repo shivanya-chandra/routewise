@@ -24,6 +24,11 @@ def test_build_request_history_nests_model_calls() -> None:
                 "request_status": "success",
                 "cache_hit": False,
                 "cache_bypassed": True,
+                "semantic_cache_hit": True,
+                "semantic_cache_input_hash": "source-hash",
+                "semantic_cache_score": Decimal("0.98"),
+                "semantic_cache_method": "hash_embedding",
+                "routing_policy": "quality_first",
                 "prompt_tokens": 31,
                 "completion_tokens": 3,
                 "total_tokens": 34,
@@ -69,6 +74,11 @@ def test_build_request_history_nests_model_calls() -> None:
     assert history[0]["id"] == str(request_id)
     assert history[0]["request_status"] == "success"
     assert history[0]["cache_bypassed"] is True
+    assert history[0]["semantic_cache_hit"] is True
+    assert history[0]["semantic_cache_input_hash"] == "source-hash"
+    assert history[0]["semantic_cache_score"] == "0.98"
+    assert history[0]["semantic_cache_method"] == "hash_embedding"
+    assert history[0]["routing_policy"] == "quality_first"
     assert history[0]["estimated_cost_usd"] == "0E-8"
     assert history[0]["preflight_estimated_total_tokens"] == 296
     assert history[0]["preflight_estimated_cost_usd"] == "0E-8"

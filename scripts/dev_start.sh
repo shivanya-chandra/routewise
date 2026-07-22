@@ -26,6 +26,25 @@ fi
 require_command python
 require_command uvicorn
 
+if ! python - <<'PY'
+import subprocess
+
+try:
+    subprocess.run(
+        ["docker", "info"],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=15,
+    )
+except (subprocess.SubprocessError, OSError):
+    raise SystemExit(1)
+PY
+then
+  printf "Docker is not ready. Open Docker Desktop and wait until docker info succeeds.\n" >&2
+  exit 1
+fi
+
 export REQUEST_LOGGING_ENABLED="${REQUEST_LOGGING_ENABLED:-true}"
 export AUTO_CREATE_DB_TABLES="${AUTO_CREATE_DB_TABLES:-true}"
 export CACHE_BACKEND="${CACHE_BACKEND:-memory}"
@@ -37,6 +56,11 @@ export PORT="${PORT:-8080}"
 
 log "Starting Postgres"
 docker compose up -d postgres
+
+if [[ "$CACHE_BACKEND" == "redis" ]]; then
+  log "Starting Redis"
+  docker compose up -d redis
+fi
 
 log "Waiting for Postgres"
 postgres_ready=false

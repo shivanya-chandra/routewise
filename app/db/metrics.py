@@ -29,6 +29,8 @@ class EvalSummary:
     blocked_requests: int = 0
     budget_exceeded_requests: int = 0
     fallback_skipped_requests: int = 0
+    exact_cache_hits: int = 0
+    semantic_cache_hits: int = 0
 
 
 @dataclass(frozen=True)
@@ -64,6 +66,7 @@ class RoutingDecisionUsage:
     average_quality_score: float | None
     budget_exceeded_requests: int = 0
     fallback_skipped_requests: int = 0
+    semantic_cache_hit: bool = False
 
 
 def decimal_to_string(value: Decimal | None) -> str:
@@ -87,6 +90,7 @@ def average(total: int | None, count: int) -> float | None:
 def build_summary(request_stats: dict[str, Any], call_stats: dict[str, Any]) -> EvalSummary:
     total_requests = int(request_stats["total_requests"] or 0)
     cache_hits = int(request_stats["cache_hits"] or 0)
+    semantic_cache_hits = int(request_stats.get("semantic_cache_hits") or 0)
     compressed_requests = int(request_stats.get("compressed_requests") or 0)
     prompt_words_saved = int(request_stats.get("prompt_words_saved") or 0)
     average_compression_ratio = request_stats.get("average_compression_ratio")
@@ -131,6 +135,8 @@ def build_summary(request_stats: dict[str, Any], call_stats: dict[str, Any]) -> 
         blocked_requests=blocked_requests,
         budget_exceeded_requests=budget_exceeded_requests,
         fallback_skipped_requests=fallback_skipped_requests,
+        exact_cache_hits=max(0, cache_hits - semantic_cache_hits),
+        semantic_cache_hits=semantic_cache_hits,
     )
 
 
@@ -142,6 +148,8 @@ async def fetch_eval_summary() -> EvalSummary:
                 select
                     count(*) as total_requests,
                     coalesce(sum(case when cache_hit then 1 else 0 end), 0) as cache_hits,
+                    coalesce(sum(case when semantic_cache_hit then 1 else 0 end), 0)
+                        as semantic_cache_hits,
                     coalesce(sum(case when cache_bypassed then 1 else 0 end), 0)
                         as cache_bypassed_requests,
                     coalesce(sum(case when request_status = 'blocked' then 1 else 0 end), 0)
@@ -263,6 +271,7 @@ def build_routing_decisions(rows: list[dict[str, Any]]) -> list[RoutingDecisionU
                 selected_model=row["selected_model"],
                 final_model=row["final_model"],
                 cache_hit=row["cache_hit"],
+                semantic_cache_hit=row.get("semantic_cache_hit", False),
                 request_count=request_count,
                 request_rate=rate(request_count, total_requests),
                 total_fallbacks=int(row["total_fallbacks"] or 0),
@@ -295,6 +304,7 @@ async def fetch_routing_decisions() -> list[RoutingDecisionUsage]:
                     selected_model,
                     final_model,
                     cache_hit,
+                    semantic_cache_hit,
                     count(*) as request_count,
                     coalesce(sum(fallback_count), 0) as total_fallbacks,
                     coalesce(sum(case when budget_exceeded then 1 else 0 end), 0)
@@ -319,7 +329,7 @@ async def fetch_routing_decisions() -> list[RoutingDecisionUsage]:
                     sum(latency_ms) as latency_sum,
                     avg(quality_score) as average_quality_score
                 from llm_requests
-                group by selected_model, final_model, cache_hit
+                group by selected_model, final_model, cache_hit, semantic_cache_hit
                 order by request_count desc, selected_model asc, final_model asc
                 """
             )

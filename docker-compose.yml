@@ -1,14 +1,51 @@
 services:
   redis:
     image: redis:7
+    restart: unless-stopped
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   postgres:
     image: postgres:16
+    restart: unless-stopped
     environment:
       POSTGRES_USER: routewise
       POSTGRES_PASSWORD: routewise
       POSTGRES_DB: routewise
     ports:
       - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U routewise -d routewise"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  app:
+    build: .
+    restart: unless-stopped
+    profiles: ["app"]
+    environment:
+      APP_ENVIRONMENT: production
+      CACHE_BACKEND: redis
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql+asyncpg://routewise:routewise@postgres:5432/routewise
+      REQUEST_LOGGING_ENABLED: "true"
+      AUTO_CREATE_DB_TABLES: "true"
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+      ROUTEWISE_API_KEY: ${ROUTEWISE_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      MODEL_PRICES_JSON: ${MODEL_PRICES_JSON:-{}}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy

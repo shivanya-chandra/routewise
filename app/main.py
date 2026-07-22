@@ -4,9 +4,12 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import asdict
+from datetime import UTC, datetime
 from decimal import Decimal
 
-from fastapi import FastAPI, HTTPException, Query, Response
+from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from app.config import settings
@@ -14,8 +17,9 @@ from app.core.cache import (
     ExactCache,
     MemoryExactCache,
     MemorySemanticCacheIndex,
-    SemanticCacheCandidate,
     RedisExactCache,
+    SemanticCacheCandidate,
+    deserialize_cached_prompt,
     request_hash,
 )
 from app.core.config_diagnostics import build_config_diagnostics
@@ -31,22 +35,36 @@ from app.core.model_client import (
 from app.core.preflight import check_estimated_budget, estimate_message_tokens, estimate_model_cost
 from app.core.prompt_compressor import CompressionResult, compress_messages
 from app.core.quality import QualityAssessment, assess_answer_quality
-from app.core.router_engine import choose_model
+from app.core.report import build_metrics_recommendations
+from app.core.router_engine import choose_fallback_model, choose_model
+from app.core.security import FixedWindowRateLimiter, api_key_is_valid, parse_cors_origins
+from app.dashboard import dashboard_response
 from app.db.repository import (
+    CacheEntryLog,
     ModelCallLog,
     RouteRequestLog,
+    cache_entry_from_messages,
     decimal_from_float,
+    fetch_cache_entries,
     provider_from_model,
+    save_cache_entry,
     save_route_log,
     sum_model_call_costs,
     sum_nullable_int,
 )
 from app.db.history import fetch_request_history
-from app.db.metrics import fetch_eval_summary, fetch_model_usage, fetch_routing_decisions
+from app.db.metrics import (
+    build_summary,
+    fetch_eval_summary,
+    fetch_model_usage,
+    fetch_routing_decisions,
+)
 from app.schemas import (
     ConfigDiagnosticIssueItem,
     ConfigDiagnosticsResponse,
     MetricsSummaryResponse,
+    MetricsRecommendation,
+    MetricsReportResponse,
     ModelCatalogItem,
     ModelCatalogResponse,
     ModelUsageItem,
@@ -65,7 +83,10 @@ from app.schemas import (
 
 logger = logging.getLogger(__name__)
 cache_client: ExactCache | None = None
-semantic_cache_index = MemorySemanticCacheIndex()
+semantic_cache_index = MemorySemanticCacheIndex(
+    dimensions=settings.semantic_cache_embedding_dimensions
+)
+route_rate_limiter = FixedWindowRateLimiter(settings.rate_limit_requests_per_minute)
 
 
 @asynccontextmanager
@@ -82,6 +103,9 @@ async def lifespan(app: FastAPI):
 
         await init_db()
 
+    if settings.request_logging_enabled:
+        await hydrate_cache_entries_from_db()
+
     try:
         yield
     finally:
@@ -93,12 +117,64 @@ async def lifespan(app: FastAPI):
             await close_db()
 
 
-app = FastAPI(title="RouteWise LLM Routing Gateway", lifespan=lifespan)
+app = FastAPI(
+    title="RouteWise LLM Routing Gateway",
+    version="1.0.0",
+    lifespan=lifespan,
+)
+
+cors_origins = parse_cors_origins(settings.cors_allowed_origins)
+if cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=cors_origins,
+        allow_credentials=False,
+        allow_methods=["GET", "POST"],
+        allow_headers=["Content-Type", "X-API-Key", "X-Request-ID"],
+    )
+
+
+@app.middleware("http")
+async def request_guard(request: Request, call_next):
+    request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+    request.state.request_id = request_id
+
+    if request.url.path.startswith("/route"):
+        provided_key = request.headers.get("X-API-Key")
+        if not api_key_is_valid(settings.routewise_api_key, provided_key):
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "A valid X-API-Key header is required."},
+                headers={"X-Request-ID": request_id},
+            )
+
+        if request.url.path == "/route" and request.method == "POST":
+            identity = provided_key or (request.client.host if request.client else "unknown")
+            route_rate_limiter.requests_per_minute = settings.rate_limit_requests_per_minute
+            decision = route_rate_limiter.check(identity)
+            if not decision.allowed:
+                return JSONResponse(
+                    status_code=429,
+                    content={"detail": "Route request rate limit exceeded."},
+                    headers={
+                        "X-Request-ID": request_id,
+                        "Retry-After": str(decision.retry_after_seconds or 1),
+                    },
+                )
+
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
+    return response
 
 
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/dashboard", include_in_schema=False)
+async def dashboard():
+    return dashboard_response()
 
 
 def readiness_status(checks: dict[str, ReadinessCheck]) -> str:
@@ -151,7 +227,19 @@ async def database_readiness_check() -> ReadinessCheck:
         from app.db.session import async_session
 
         async with async_session() as session:
-            await session.execute(text("select 1"))
+            result = await session.execute(
+                text(
+                    """
+                    select
+                        to_regclass('public.llm_requests') as llm_requests,
+                        to_regclass('public.llm_calls') as llm_calls,
+                        to_regclass('public.cache_entries') as cache_entries
+                    """
+                )
+            )
+            missing = missing_database_tables(dict(result.mappings().one()))
+            if missing:
+                raise RuntimeError("missing tables: " + ", ".join(missing))
 
     try:
         await asyncio.wait_for(probe_database(), timeout=settings.readiness_timeout_seconds)
@@ -163,8 +251,13 @@ async def database_readiness_check() -> ReadinessCheck:
 
     return ReadinessCheck(
         status="ok",
-        detail="Postgres accepted a simple select 1 query.",
+        detail="Postgres is reachable and all RouteWise tables exist.",
     )
+
+
+def missing_database_tables(table_row: dict[str, object]) -> list[str]:
+    required = ("llm_requests", "llm_calls", "cache_entries")
+    return [table for table in required if table_row.get(table) is None]
 
 
 async def model_backend_readiness_check() -> ReadinessCheck:
@@ -286,6 +379,57 @@ async def routing_decisions() -> RoutingDecisionsResponse:
     )
 
 
+@app.get("/metrics/report", response_model=MetricsReportResponse)
+async def metrics_report(limit: int = Query(default=20, ge=1, le=100)) -> MetricsReportResponse:
+    if settings.request_logging_enabled:
+        try:
+            summary, models, routes, recent_requests = await asyncio.gather(
+                fetch_eval_summary(),
+                fetch_model_usage(),
+                fetch_routing_decisions(),
+                fetch_request_history(limit=limit),
+            )
+        except Exception:
+            logger.exception("Failed to build metrics report")
+            raise HTTPException(
+                status_code=503,
+                detail="Metrics report unavailable. Check Postgres and local tables.",
+            )
+    else:
+        summary = build_summary(
+            {
+                "total_requests": 0,
+                "cache_hits": 0,
+                "total_fallbacks": 0,
+                "request_latency_sum": None,
+            },
+            {
+                "successful_model_calls": 0,
+                "failed_model_calls": 0,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "estimated_cost_usd": None,
+                "model_latency_sum": None,
+            },
+        )
+        models = []
+        routes = []
+        recent_requests = []
+
+    recommendations = build_metrics_recommendations(summary, models)
+    return MetricsReportResponse(
+        generated_at=datetime.now(UTC).isoformat(),
+        summary=MetricsSummaryResponse(**asdict(summary)),
+        models=[ModelUsageItem(**asdict(model)) for model in models],
+        routes=[RoutingDecisionItem(**asdict(route)) for route in routes],
+        recent_requests=recent_requests,
+        recommendations=[
+            MetricsRecommendation(**asdict(recommendation))
+            for recommendation in recommendations
+        ],
+    )
+
+
 @app.get("/requests", response_model=RequestHistoryResponse)
 async def request_history(limit: int = Query(default=20, ge=1, le=100)) -> RequestHistoryResponse:
     try:
@@ -322,6 +466,7 @@ async def route_preview(payload: RouteRequest) -> RoutePreviewResponse:
         payload.messages,
         settings=settings,
         max_cost_tier=payload.max_cost_tier,
+        routing_policy=payload.routing_policy,
     )
 
     if cache_status == "hit":
@@ -333,6 +478,7 @@ async def route_preview(payload: RouteRequest) -> RoutePreviewResponse:
             candidate_model=decision.model,
             candidate_tier=decision.tier,
             route_reason="exact cache hit; model call would be skipped",
+            routing_policy=payload.routing_policy,
         )
 
     compression = compress_messages(
@@ -343,18 +489,33 @@ async def route_preview(payload: RouteRequest) -> RoutePreviewResponse:
     )
     route_reason = route_reason_with_cache_bypass(decision.reason, payload.bypass_cache)
     route_reason = route_reason_with_compression(route_reason, compression)
-    semantic_candidate = find_semantic_cache_candidate(messages, cache_key, cache_status)
+    reuse_candidate, reuse_answer = await semantic_cache_reuse(
+        payload,
+        messages,
+        cache_key,
+        cache_status,
+    )
+    semantic_candidate = reuse_candidate
+    if semantic_candidate is None and settings.semantic_cache_preview_enabled:
+        semantic_candidate = find_semantic_cache_candidate(
+            messages,
+            cache_key,
+            cache_status,
+        )
+    semantic_reuse_eligible = reuse_candidate is not None and reuse_answer is not None
     if semantic_candidate is not None:
         route_reason = (
             f"{route_reason}; semantic cache candidate "
             f"score={semantic_candidate.similarity_score}"
         )
+    if semantic_reuse_eligible:
+        route_reason = f"{route_reason}; semantic cache reuse eligible"
 
     return RoutePreviewResponse(
         input_hash=cache_key,
         cache_status=cache_status,
-        would_call_model=True,
-        selected_model=decision.model,
+        would_call_model=not semantic_reuse_eligible,
+        selected_model="semantic_cache" if semantic_reuse_eligible else decision.model,
         candidate_model=decision.model,
         candidate_tier=decision.tier,
         route_reason=route_reason,
@@ -368,6 +529,11 @@ async def route_preview(payload: RouteRequest) -> RoutePreviewResponse:
         semantic_cache_reason=(
             semantic_candidate.reason if semantic_candidate is not None else None
         ),
+        semantic_cache_method=(
+            semantic_candidate.method if semantic_candidate is not None else None
+        ),
+        semantic_cache_reuse_eligible=semantic_reuse_eligible,
+        routing_policy=payload.routing_policy,
         prompt_compressed=compression.compressed,
         original_prompt_words=compression.original_words,
         compressed_prompt_words=compression.compressed_words,
@@ -397,6 +563,7 @@ async def route_estimate(payload: RouteRequest) -> RouteEstimateResponse:
         payload.messages,
         settings=settings,
         max_cost_tier=payload.max_cost_tier,
+        routing_policy=payload.routing_policy,
     )
     original_estimated_prompt_tokens = estimate_message_tokens(messages)
 
@@ -420,6 +587,7 @@ async def route_estimate(payload: RouteRequest) -> RouteEstimateResponse:
             max_estimated_cost_usd=payload.max_estimated_cost_usd,
             budget_status=budget.status,
             budget_exceeded=budget.exceeded,
+            routing_policy=payload.routing_policy,
             estimate_note="Exact cache hit; no model call cost is expected.",
         )
 
@@ -429,6 +597,55 @@ async def route_estimate(payload: RouteRequest) -> RouteEstimateResponse:
         word_threshold=settings.prompt_compression_word_threshold,
         target_words=settings.prompt_compression_target_words,
     )
+    reuse_candidate, reuse_answer = await semantic_cache_reuse(
+        payload,
+        messages,
+        cache_key,
+        cache_status,
+    )
+    semantic_candidate = reuse_candidate
+    if semantic_candidate is None and settings.semantic_cache_preview_enabled:
+        semantic_candidate = find_semantic_cache_candidate(
+            messages,
+            cache_key,
+            cache_status,
+        )
+    semantic_reuse_eligible = reuse_candidate is not None and reuse_answer is not None
+
+    if semantic_reuse_eligible and semantic_candidate is not None:
+        budget = check_estimated_budget("0", payload.max_estimated_cost_usd)
+        return RouteEstimateResponse(
+            input_hash=cache_key,
+            cache_status=cache_status,
+            would_call_model=False,
+            selected_model="semantic_cache",
+            candidate_model=decision.model,
+            candidate_tier=decision.tier,
+            price_source="cache",
+            original_estimated_prompt_tokens=original_estimated_prompt_tokens,
+            estimated_prompt_tokens=0,
+            estimated_completion_tokens=0,
+            estimated_total_tokens=0,
+            estimated_input_cost_usd="0",
+            estimated_output_cost_usd="0",
+            estimated_total_cost_usd="0",
+            max_estimated_cost_usd=payload.max_estimated_cost_usd,
+            budget_status=budget.status,
+            budget_exceeded=budget.exceeded,
+            semantic_cache_candidate=True,
+            semantic_cache_input_hash=semantic_candidate.input_hash,
+            semantic_cache_score=semantic_candidate.similarity_score,
+            semantic_cache_reason=semantic_candidate.reason,
+            semantic_cache_method=semantic_candidate.method,
+            semantic_cache_reuse_eligible=True,
+            routing_policy=payload.routing_policy,
+            prompt_compressed=compression.compressed,
+            original_prompt_words=compression.original_words,
+            compressed_prompt_words=compression.compressed_words,
+            compression_ratio=compression.compression_ratio,
+            estimate_note="Semantic cache reuse is eligible; no model call cost is expected.",
+        )
+
     estimated_prompt_tokens = estimate_message_tokens(compression.messages)
     estimated_completion_tokens = settings.preflight_default_completion_tokens
     estimated_total_tokens = estimated_prompt_tokens + estimated_completion_tokens
@@ -442,8 +659,6 @@ async def route_estimate(payload: RouteRequest) -> RouteEstimateResponse:
         cost.estimated_total_cost_usd,
         payload.max_estimated_cost_usd,
     )
-    semantic_candidate = find_semantic_cache_candidate(messages, cache_key, cache_status)
-
     return RouteEstimateResponse(
         input_hash=cache_key,
         cache_status=cache_status,
@@ -472,6 +687,11 @@ async def route_estimate(payload: RouteRequest) -> RouteEstimateResponse:
         semantic_cache_reason=(
             semantic_candidate.reason if semantic_candidate is not None else None
         ),
+        semantic_cache_method=(
+            semantic_candidate.method if semantic_candidate is not None else None
+        ),
+        semantic_cache_reuse_eligible=False,
+        routing_policy=payload.routing_policy,
         prompt_compressed=compression.compressed,
         original_prompt_words=compression.original_words,
         compressed_prompt_words=compression.compressed_words,
@@ -504,20 +724,52 @@ def cached_quality_assessment() -> QualityAssessment:
     )
 
 
+def semantic_cached_quality_assessment() -> QualityAssessment:
+    return QualityAssessment(
+        score=1.0,
+        label="semantic_cache_hit",
+        reason="A high-similarity cached answer was reused with caller opt-in.",
+    )
+
+
 def find_semantic_cache_candidate(
     messages: list[dict[str, str]],
     cache_key: str,
     cache_status: str,
+    threshold: float | None = None,
 ) -> SemanticCacheCandidate | None:
-    if not settings.semantic_cache_preview_enabled:
-        return None
     if cache_status in {"hit", "bypassed"}:
         return None
     return semantic_cache_index.find_candidate(
         messages,
-        threshold=settings.semantic_cache_similarity_threshold,
+        threshold=(
+            settings.semantic_cache_similarity_threshold
+            if threshold is None
+            else threshold
+        ),
         exclude_hash=cache_key,
     )
+
+
+async def semantic_cache_reuse(
+    payload: RouteRequest,
+    messages: list[dict[str, str]],
+    cache_key: str,
+    cache_status: str,
+) -> tuple[SemanticCacheCandidate | None, str | None]:
+    if not payload.allow_semantic_cache or not settings.semantic_cache_reuse_enabled:
+        return None, None
+
+    candidate = find_semantic_cache_candidate(
+        messages,
+        cache_key,
+        cache_status,
+        threshold=settings.semantic_cache_reuse_similarity_threshold,
+    )
+    if candidate is None or cache_client is None:
+        return None, None
+
+    return candidate, await cache_client.get(candidate.input_hash)
 
 
 def route_reason_with_compression(base_reason: str, compression: CompressionResult) -> str:
@@ -542,6 +794,67 @@ async def persist_route_log(request_log: RouteRequestLog, call_logs: list[ModelC
         await save_route_log(async_session, request_log, call_logs)
     except Exception:
         logger.exception("Failed to persist route log")
+
+
+async def persist_cache_entry(
+    input_hash: str,
+    messages: list[dict[str, str]],
+    response: str,
+    model: str,
+    quality_score: float | None,
+) -> None:
+    if not settings.request_logging_enabled:
+        return
+
+    from app.db.session import async_session
+
+    try:
+        await save_cache_entry(
+            async_session,
+            cache_entry_from_messages(
+                input_hash=input_hash,
+                messages=messages,
+                response=response,
+                model=model,
+                quality_score=decimal_from_float(quality_score),
+            ),
+        )
+    except Exception:
+        logger.exception("Failed to persist cache entry")
+
+
+async def hydrate_cache_entries(entries: list[CacheEntryLog]) -> int:
+    if cache_client is None:
+        return 0
+
+    hydrated_count = 0
+    for entry in entries:
+        messages = deserialize_cached_prompt(entry.prompt)
+        if messages is None:
+            continue
+        await cache_client.set(
+            entry.input_hash,
+            entry.response,
+            ttl_seconds=settings.exact_cache_ttl_seconds,
+        )
+        semantic_cache_index.set(entry.input_hash, messages)
+        hydrated_count += 1
+
+    return hydrated_count
+
+
+async def hydrate_cache_entries_from_db() -> None:
+    from app.db.session import async_session
+
+    try:
+        entries = await fetch_cache_entries(
+            async_session,
+            limit=settings.semantic_cache_hydration_limit,
+        )
+        hydrated_count = await hydrate_cache_entries(entries)
+        logger.info("Hydrated %s persisted cache entries", hydrated_count)
+    except Exception:
+        logger.exception("Persisted cache hydration failed; startup will continue")
 
 
 def model_error_message(exc: Exception) -> str:
@@ -636,6 +949,7 @@ async def route_request(payload: RouteRequest) -> RouteResponse:
                 cache_hit=True,
                 request_status="success",
                 cache_bypassed=False,
+                routing_policy=payload.routing_policy,
                 prompt_tokens=None,
                 completion_tokens=None,
                 total_tokens=None,
@@ -662,8 +976,80 @@ async def route_request(payload: RouteRequest) -> RouteResponse:
             final_model="cache",
             cache_hit=True,
             cache_bypassed=False,
+            response_cached=True,
             fallback_count=0,
             route_reason=route_reason,
+            routing_policy=payload.routing_policy,
+            quality_score=quality_assessment.score,
+            quality_label=quality_assessment.label,
+            quality_reason=quality_assessment.reason,
+            estimated_cost_usd=0.0,
+        )
+
+    semantic_candidate, semantic_answer = await semantic_cache_reuse(
+        payload,
+        messages,
+        cache_key,
+        "bypassed" if payload.bypass_cache else "miss",
+    )
+    if semantic_candidate is not None and semantic_answer is not None:
+        latency_ms = int((time.perf_counter() - start) * 1000)
+        route_reason = (
+            f"semantic cache hit; source={semantic_candidate.input_hash}; "
+            f"score={semantic_candidate.similarity_score}; "
+            f"method={semantic_candidate.method}; latency_ms={latency_ms}"
+        )
+        cache_budget = check_estimated_budget("0", payload.max_estimated_cost_usd)
+        quality_assessment = semantic_cached_quality_assessment()
+        await persist_route_log(
+            RouteRequestLog(
+                id=request_id_uuid,
+                user_id=payload.user_id,
+                input_hash=cache_key,
+                selected_model="semantic_cache",
+                final_model="semantic_cache",
+                route_reason=route_reason,
+                cache_hit=True,
+                request_status="success",
+                semantic_cache_hit=True,
+                semantic_cache_input_hash=semantic_candidate.input_hash,
+                semantic_cache_score=decimal_from_float(
+                    semantic_candidate.similarity_score
+                ),
+                semantic_cache_method=semantic_candidate.method,
+                routing_policy=payload.routing_policy,
+                estimated_cost_usd=Decimal("0"),
+                preflight_estimated_prompt_tokens=0,
+                preflight_estimated_completion_tokens=0,
+                preflight_estimated_total_tokens=0,
+                preflight_estimated_cost_usd=Decimal("0"),
+                max_estimated_cost_usd=decimal_from_float(
+                    payload.max_estimated_cost_usd
+                ),
+                budget_status=cache_budget.status,
+                budget_exceeded=cache_budget.exceeded,
+                latency_ms=latency_ms,
+                quality_score=decimal_from_float(quality_assessment.score),
+                quality_label=quality_assessment.label,
+                quality_reason=quality_assessment.reason,
+            ),
+            call_logs,
+        )
+        return RouteResponse(
+            request_id=request_id,
+            answer=semantic_answer,
+            selected_model="semantic_cache",
+            final_model="semantic_cache",
+            cache_hit=True,
+            cache_bypassed=False,
+            response_cached=True,
+            semantic_cache_hit=True,
+            semantic_cache_input_hash=semantic_candidate.input_hash,
+            semantic_cache_score=semantic_candidate.similarity_score,
+            semantic_cache_method=semantic_candidate.method,
+            fallback_count=0,
+            route_reason=route_reason,
+            routing_policy=payload.routing_policy,
             quality_score=quality_assessment.score,
             quality_label=quality_assessment.label,
             quality_reason=quality_assessment.reason,
@@ -674,6 +1060,7 @@ async def route_request(payload: RouteRequest) -> RouteResponse:
         payload.messages,
         settings=settings,
         max_cost_tier=payload.max_cost_tier,
+        routing_policy=payload.routing_policy,
     )
 
     selected_model = decision.model
@@ -721,6 +1108,7 @@ async def route_request(payload: RouteRequest) -> RouteResponse:
                 cache_hit=False,
                 request_status="blocked",
                 cache_bypassed=payload.bypass_cache,
+                routing_policy=payload.routing_policy,
                 preflight_estimated_prompt_tokens=estimated_prompt_tokens,
                 preflight_estimated_completion_tokens=estimated_completion_tokens,
                 preflight_estimated_total_tokens=estimated_prompt_tokens + estimated_completion_tokens,
@@ -762,36 +1150,59 @@ async def route_request(payload: RouteRequest) -> RouteResponse:
         quality_assessment = assess_answer_quality(answer)
         quality_score = quality_assessment.score
 
-        if quality_score < payload.quality_target and decision.tier != "frontier":
-            fallback_cost = estimate_model_cost(
-                model=settings.frontier_model,
-                prompt_tokens=estimated_prompt_tokens,
-                completion_tokens=estimated_completion_tokens,
-                model_prices_json=settings.model_prices_json,
+        if quality_score < payload.quality_target:
+            fallback_decision = choose_fallback_model(
+                current_tier=decision.tier,
+                max_cost_tier=payload.max_cost_tier,
+                settings=settings,
             )
-            fallback_budget = check_estimated_budget(
-                fallback_cost.estimated_total_cost_usd,
-                payload.max_estimated_cost_usd,
-            )
-            if fallback_budget.exceeded:
+            if fallback_decision is None:
                 fallback_skipped = True
                 fallback_skip_reason = (
-                    "fallback skipped because estimated frontier cost "
-                    f"{fallback_cost.estimated_total_cost_usd} exceeds "
-                    f"max_estimated_cost_usd={payload.max_estimated_cost_usd}"
+                    "fallback skipped because the current model already uses "
+                    f"max_cost_tier={payload.max_cost_tier}"
                 )
             else:
-                fallback_count += 1
-                final_model = settings.frontier_model
-                result = await call_model_with_logging(
-                    request_id_uuid,
-                    final_model,
-                    model_messages,
-                    call_logs,
+                fallback_model = fallback_decision.model
+                fallback_cost = estimate_model_cost(
+                    model=fallback_model,
+                    prompt_tokens=estimated_prompt_tokens,
+                    completion_tokens=estimated_completion_tokens,
+                    model_prices_json=settings.model_prices_json,
                 )
-                answer = result.answer
-                quality_assessment = assess_answer_quality(answer)
-                quality_score = quality_assessment.score
+                fallback_budget = check_estimated_budget(
+                    fallback_cost.estimated_total_cost_usd,
+                    payload.max_estimated_cost_usd,
+                )
+                if fallback_budget.exceeded:
+                    fallback_skipped = True
+                    fallback_skip_reason = (
+                        "fallback skipped because estimated "
+                        f"{fallback_decision.tier} cost "
+                        f"{fallback_cost.estimated_total_cost_usd} exceeds "
+                        f"max_estimated_cost_usd={payload.max_estimated_cost_usd}"
+                    )
+                else:
+                    fallback_count += 1
+                    try:
+                        fallback_result = await call_model_with_logging(
+                            request_id_uuid,
+                            fallback_model,
+                            model_messages,
+                            call_logs,
+                        )
+                    except Exception as exc:
+                        fallback_skipped = True
+                        fallback_skip_reason = (
+                            f"{fallback_decision.tier} fallback failed; "
+                            f"returning first answer: {model_error_message(exc)}"
+                        )
+                    else:
+                        final_model = fallback_model
+                        result = fallback_result
+                        answer = result.answer
+                        quality_assessment = assess_answer_quality(answer)
+                        quality_score = quality_assessment.score
     except Exception:
         latency_ms = int((time.perf_counter() - start) * 1000)
         route_reason = route_reason_with_cache_bypass(decision.reason, payload.bypass_cache)
@@ -810,6 +1221,7 @@ async def route_request(payload: RouteRequest) -> RouteResponse:
                 cache_hit=False,
                 request_status="error",
                 cache_bypassed=payload.bypass_cache,
+                routing_policy=payload.routing_policy,
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
                 total_tokens=total_tokens_from_calls(call_logs),
@@ -850,15 +1262,29 @@ async def route_request(payload: RouteRequest) -> RouteResponse:
             ),
         )
 
-    await cache_client.set(cache_key, answer, ttl_seconds=settings.exact_cache_ttl_seconds)
-    if settings.semantic_cache_preview_enabled:
-        semantic_cache_index.set(cache_key, messages)
+    response_cached = quality_score >= payload.quality_target
+    if response_cached:
+        await cache_client.set(cache_key, answer, ttl_seconds=settings.exact_cache_ttl_seconds)
+        if settings.semantic_cache_preview_enabled or settings.semantic_cache_reuse_enabled:
+            semantic_cache_index.set(cache_key, messages)
+        await persist_cache_entry(
+            input_hash=cache_key,
+            messages=messages,
+            response=answer,
+            model=final_model,
+            quality_score=quality_score,
+        )
 
     latency_ms = int((time.perf_counter() - start) * 1000)
     route_reason = route_reason_with_cache_bypass(decision.reason, payload.bypass_cache)
     route_reason = route_reason_with_compression(route_reason, compression)
     if fallback_skip_reason is not None:
         route_reason = f"{route_reason}; {fallback_skip_reason}"
+    if not response_cached:
+        route_reason = (
+            f"{route_reason}; response not cached because quality score "
+            f"{quality_score} is below target {payload.quality_target}"
+        )
     route_reason = f"{route_reason}; latency_ms={latency_ms}"
     prompt_tokens = sum_nullable_int([call.prompt_tokens for call in call_logs])
     completion_tokens = sum_nullable_int([call.completion_tokens for call in call_logs])
@@ -875,6 +1301,7 @@ async def route_request(payload: RouteRequest) -> RouteResponse:
             cache_hit=False,
             request_status="success",
             cache_bypassed=payload.bypass_cache,
+            routing_policy=payload.routing_policy,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             total_tokens=total_tokens_from_calls(call_logs),
@@ -910,16 +1337,18 @@ async def route_request(payload: RouteRequest) -> RouteResponse:
         final_model=final_model,
         cache_hit=False,
         cache_bypassed=payload.bypass_cache,
+        response_cached=response_cached,
         fallback_count=fallback_count,
         fallback_skipped=fallback_skipped,
         fallback_skip_reason=fallback_skip_reason,
         route_reason=route_reason,
+        routing_policy=payload.routing_policy,
         quality_score=quality_score,
         quality_label=quality_assessment.label if quality_assessment else None,
         quality_reason=quality_assessment.reason if quality_assessment else None,
-        prompt_tokens=result.prompt_tokens,
-        completion_tokens=result.completion_tokens,
-        total_tokens=result.total_tokens,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        total_tokens=total_tokens_from_calls(call_logs),
         estimated_cost_usd=float(estimated_cost_usd) if estimated_cost_usd is not None else None,
         prompt_compressed=compression.compressed,
         original_prompt_words=compression.original_words,

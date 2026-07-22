@@ -5,6 +5,9 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
+from sqlalchemy import text
+
+from app.core.cache import serialize_cached_prompt
 from app.core.providers import provider_from_model_name
 
 if TYPE_CHECKING:
@@ -28,6 +31,11 @@ class RouteRequestLog:
     cache_hit: bool
     request_status: str = "success"
     cache_bypassed: bool = False
+    semantic_cache_hit: bool = False
+    semantic_cache_input_hash: str | None = None
+    semantic_cache_score: Decimal | None = None
+    semantic_cache_method: str | None = None
+    routing_policy: str = "balanced"
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     total_tokens: int | None = None
@@ -63,6 +71,31 @@ class ModelCallLog:
     estimated_cost_usd: Decimal | None
     latency_ms: int | None
     error_message: str | None = None
+
+
+@dataclass(frozen=True)
+class CacheEntryLog:
+    input_hash: str
+    prompt: str
+    response: str
+    model: str
+    quality_score: Decimal | None = None
+
+
+def cache_entry_from_messages(
+    input_hash: str,
+    messages: list[dict[str, str]],
+    response: str,
+    model: str,
+    quality_score: Decimal | None = None,
+) -> CacheEntryLog:
+    return CacheEntryLog(
+        input_hash=input_hash,
+        prompt=serialize_cached_prompt(messages),
+        response=response,
+        model=model,
+        quality_score=quality_score,
+    )
 
 
 def decimal_from_float(value: float | None) -> Decimal | None:
@@ -107,6 +140,11 @@ async def add_route_log(
             request_status=request_log.request_status,
             cache_hit=request_log.cache_hit,
             cache_bypassed=request_log.cache_bypassed,
+            semantic_cache_hit=request_log.semantic_cache_hit,
+            semantic_cache_input_hash=request_log.semantic_cache_input_hash,
+            semantic_cache_score=request_log.semantic_cache_score,
+            semantic_cache_method=request_log.semantic_cache_method,
+            routing_policy=request_log.routing_policy,
             prompt_tokens=request_log.prompt_tokens,
             completion_tokens=request_log.completion_tokens,
             total_tokens=request_log.total_tokens,
@@ -162,3 +200,60 @@ async def save_route_log(
         except Exception:
             await session.rollback()
             raise
+
+
+async def save_cache_entry(
+    session_factory: "async_sessionmaker[AsyncSession]",
+    cache_entry: CacheEntryLog,
+) -> None:
+    async with session_factory() as session:
+        try:
+            await session.execute(
+                text(
+                    """
+                    insert into cache_entries (
+                        id, input_hash, prompt, response, model, quality_score, created_at
+                    )
+                    values (
+                        :id, :input_hash, :prompt, :response, :model, :quality_score, now()
+                    )
+                    on conflict (input_hash) do update set
+                        prompt = excluded.prompt,
+                        response = excluded.response,
+                        model = excluded.model,
+                        quality_score = excluded.quality_score,
+                        created_at = now()
+                    """
+                ),
+                {
+                    "id": uuid.uuid4(),
+                    "input_hash": cache_entry.input_hash,
+                    "prompt": cache_entry.prompt,
+                    "response": cache_entry.response,
+                    "model": cache_entry.model,
+                    "quality_score": cache_entry.quality_score,
+                },
+            )
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+
+
+async def fetch_cache_entries(
+    session_factory: "async_sessionmaker[AsyncSession]",
+    limit: int,
+) -> list[CacheEntryLog]:
+    async with session_factory() as session:
+        result = await session.execute(
+            text(
+                """
+                select input_hash, prompt, response, model, quality_score
+                from cache_entries
+                order by created_at desc
+                limit :limit
+                """
+            ),
+            {"limit": limit},
+        )
+        return [CacheEntryLog(**dict(row)) for row in result.mappings().all()]

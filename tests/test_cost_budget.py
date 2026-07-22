@@ -114,7 +114,7 @@ def test_route_request_skips_over_budget_fallback(monkeypatch) -> None:
     payload = RouteRequest(
         user_id="budget-test",
         messages=[{"role": "user", "content": "Say hello in one sentence."}],
-        max_cost_tier="small",
+        max_cost_tier="frontier",
         quality_target=0.9,
         max_estimated_cost_usd=0.001,
     )
@@ -152,4 +152,4 @@ def test_route_request_skips_over_budget_fallback(monkeypatch) -> None:
     assert response.fallback_skipped is True
     assert response.fallback_skip_reason is not None
     assert "fallback skipped" in response.route_reason
-    assert cache_key in semantic_cache_index.entries
+    assert cache_key not in semantic_cache_index.entries

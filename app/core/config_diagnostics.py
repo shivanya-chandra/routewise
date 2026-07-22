@@ -130,6 +130,43 @@ def add_duplicate_model_issues(
         )
 
 
+def add_runtime_issues(
+    issues: list[ConfigDiagnosticIssue],
+    settings: DiagnosticSettings,
+) -> None:
+    environment = str(getattr(settings, "app_environment", "development")).lower()
+    if environment != "production":
+        return
+
+    if not getattr(settings, "routewise_api_key", ""):
+        issues.append(
+            ConfigDiagnosticIssue(
+                severity="warning",
+                code="missing_routewise_api_key",
+                message="Production mode is enabled without ROUTEWISE_API_KEY.",
+                hint="Set ROUTEWISE_API_KEY to protect model-routing endpoints.",
+            )
+        )
+    if getattr(settings, "cache_backend", "memory") == "memory":
+        issues.append(
+            ConfigDiagnosticIssue(
+                severity="warning",
+                code="in_memory_production_cache",
+                message="Production mode is using an in-memory exact cache.",
+                hint="Set CACHE_BACKEND=redis for shared, restart-safe cache behavior.",
+            )
+        )
+    if not getattr(settings, "request_logging_enabled", False):
+        issues.append(
+            ConfigDiagnosticIssue(
+                severity="warning",
+                code="production_logging_disabled",
+                message="Production mode has request logging disabled.",
+                hint="Enable REQUEST_LOGGING_ENABLED for audit history and metrics.",
+            )
+        )
+
+
 def build_config_diagnostics(settings: DiagnosticSettings) -> ConfigDiagnostics:
     issues: list[ConfigDiagnosticIssue] = []
 
@@ -149,5 +186,6 @@ def build_config_diagnostics(settings: DiagnosticSettings) -> ConfigDiagnostics:
     add_price_issues(issues, catalog)
     add_provider_issues(issues, catalog, settings)
     add_duplicate_model_issues(issues, catalog)
+    add_runtime_issues(issues, settings)
 
     return ConfigDiagnostics(status=status_from_issues(issues), issues=issues)
