@@ -51,6 +51,8 @@ export CACHE_BACKEND="${CACHE_BACKEND:-memory}"
 export MODEL_CALL_TIMEOUT_SECONDS="${MODEL_CALL_TIMEOUT_SECONDS:-60}"
 export OLLAMA_BASE_URL="${OLLAMA_BASE_URL:-http://localhost:11434}"
 export OLLAMA_HTTP_TIMEOUT_SECONDS="${OLLAMA_HTTP_TIMEOUT_SECONDS:-60}"
+export OLLAMA_KEEP_ALIVE="${OLLAMA_KEEP_ALIVE:-30m}"
+export OLLAMA_CONTEXT_LENGTH="${OLLAMA_CONTEXT_LENGTH:-2048}"
 export SMALL_MODEL="${SMALL_MODEL:-ollama/llama3.2}"
 export PORT="${PORT:-8080}"
 
@@ -93,7 +95,7 @@ if [[ "$SMALL_MODEL" == ollama/* ]]; then
   if ! curl --fail --silent --show-error --max-time "$OLLAMA_HTTP_TIMEOUT_SECONDS" \
     "${OLLAMA_BASE_URL%/}/api/chat" \
     -H "Content-Type: application/json" \
-    -d "{\"model\":\"${ollama_model}\",\"messages\":[{\"role\":\"user\",\"content\":\"Say hello in one sentence.\"}],\"stream\":false}" \
+    -d "{\"model\":\"${ollama_model}\",\"messages\":[{\"role\":\"user\",\"content\":\"Hi\"}],\"stream\":false,\"keep_alive\":\"${OLLAMA_KEEP_ALIVE}\",\"options\":{\"num_predict\":1,\"num_ctx\":${OLLAMA_CONTEXT_LENGTH}}}" \
     >/dev/null; then
     printf "Could not warm Ollama model %s.\n" "$ollama_model" >&2
     printf "If the model is missing, run: ollama pull %s\n" "$ollama_model" >&2

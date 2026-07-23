@@ -38,6 +38,7 @@ def test_route_estimate_reports_exceeded_budget(monkeypatch) -> None:
         messages=[{"role": "user", "content": "Explain this architecture in detail."}],
         max_cost_tier="frontier",
         max_estimated_cost_usd=0.001,
+        max_completion_tokens=500,
     )
 
     monkeypatch.setattr("app.main.cache_client", FakeCache())
@@ -58,6 +59,7 @@ def test_route_estimate_reports_unknown_budget_when_price_is_missing(monkeypatch
         messages=[{"role": "user", "content": "Explain this architecture in detail."}],
         max_cost_tier="frontier",
         max_estimated_cost_usd=0.001,
+        max_completion_tokens=500,
     )
 
     monkeypatch.setattr("app.main.cache_client", FakeCache())
@@ -78,6 +80,7 @@ def test_route_request_rejects_over_budget_before_model_call(monkeypatch) -> Non
         messages=[{"role": "user", "content": "Explain this architecture in detail."}],
         max_cost_tier="frontier",
         max_estimated_cost_usd=0.001,
+        max_completion_tokens=500,
     )
 
     async def fail_if_called(*args, **kwargs):
@@ -117,11 +120,18 @@ def test_route_request_skips_over_budget_fallback(monkeypatch) -> None:
         max_cost_tier="frontier",
         quality_target=0.9,
         max_estimated_cost_usd=0.001,
+        max_completion_tokens=500,
     )
     called_models: list[str] = []
     cache_key = request_hash([message.model_dump() for message in payload.messages])
 
-    async def fake_call_model_with_logging(request_id, model, messages, call_logs):
+    async def fake_call_model_with_logging(
+        request_id,
+        model,
+        messages,
+        call_logs,
+        max_completion_tokens,
+    ):
         called_models.append(model)
         return ModelResult(
             answer="Too short.",

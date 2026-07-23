@@ -63,19 +63,18 @@ def test_route_estimate_reports_local_model_zero_cost(monkeypatch) -> None:
         user_id="estimate-test",
         messages=[{"role": "user", "content": "Say hello in one sentence."}],
         max_cost_tier="small",
+        max_completion_tokens=16,
     )
 
     monkeypatch.setattr("app.main.cache_client", FakeCache())
     monkeypatch.setattr("app.main.settings.small_model", "ollama/llama3.2")
-    monkeypatch.setattr("app.main.settings.preflight_default_completion_tokens", 10)
-
     response = asyncio.run(route_estimate(payload))
 
     assert response.cache_status == "miss"
     assert response.would_call_model is True
     assert response.selected_model == "ollama/llama3.2"
     assert response.price_source == "built_in"
-    assert response.estimated_completion_tokens == 10
+    assert response.estimated_completion_tokens == 16
     assert response.estimated_total_cost_usd == "0E-8"
 
 
@@ -84,12 +83,12 @@ def test_route_estimate_reports_configured_paid_model_cost(monkeypatch) -> None:
         user_id="estimate-test",
         messages=[{"role": "user", "content": "Explain this architecture in detail."}],
         max_cost_tier="frontier",
+        max_completion_tokens=500,
     )
 
     monkeypatch.setattr("app.main.cache_client", FakeCache())
     monkeypatch.setattr("app.main.settings.small_model", "ollama/llama3.2")
     monkeypatch.setattr("app.main.settings.medium_model", "paid/model")
-    monkeypatch.setattr("app.main.settings.preflight_default_completion_tokens", 500)
     monkeypatch.setattr("app.main.settings.model_prices_json", '{"paid/model": ["0.01", "0.02"]}')
 
     response = asyncio.run(route_estimate(payload))
@@ -98,6 +97,31 @@ def test_route_estimate_reports_configured_paid_model_cost(monkeypatch) -> None:
     assert response.price_source == "configured"
     assert response.estimated_total_tokens > response.estimated_prompt_tokens
     assert response.estimated_total_cost_usd is not None
+
+
+def test_route_estimate_prices_unavailable_openai_model_without_calling_it(
+    monkeypatch,
+) -> None:
+    payload = RouteRequest(
+        user_id="estimate-test",
+        messages=[{"role": "user", "content": "Explain this architecture in detail."}],
+        max_cost_tier="frontier",
+        max_completion_tokens=64,
+    )
+
+    monkeypatch.setattr("app.main.cache_client", FakeCache())
+    monkeypatch.setattr("app.main.settings.medium_model", "gpt-4o-mini")
+    monkeypatch.setattr("app.main.settings.openai_api_key", "")
+    monkeypatch.setattr("app.main.settings.model_prices_json", "")
+
+    response = asyncio.run(route_estimate(payload))
+
+    assert response.selected_model == "gpt-4o-mini"
+    assert response.price_source == "built_in"
+    assert response.estimated_total_cost_usd is not None
+    assert response.model_available is False
+    assert response.would_call_model is False
+    assert "OPENAI_API_KEY" in (response.model_availability_reason or "")
 
 
 def test_route_estimate_reports_semantic_cache_candidate(monkeypatch) -> None:

@@ -24,6 +24,7 @@ from app.core.cache import (
 )
 from app.core.config_diagnostics import build_config_diagnostics
 from app.core.cost import estimate_cost_usd
+from app.core.model_availability import ModelUnavailableError, model_availability
 from app.core.model_catalog import build_model_catalog
 from app.core.model_client import (
     ModelResult,
@@ -542,6 +543,7 @@ async def route_preview(payload: RouteRequest) -> RoutePreviewResponse:
         max_cost_tier=payload.max_cost_tier,
         routing_policy=payload.routing_policy,
     )
+    availability = model_availability(decision.model, settings)
 
     if cache_status == "hit":
         return RoutePreviewResponse(
@@ -584,14 +586,20 @@ async def route_preview(payload: RouteRequest) -> RoutePreviewResponse:
         )
     if semantic_reuse_eligible:
         route_reason = f"{route_reason}; semantic cache reuse eligible"
+    elif not availability.available:
+        route_reason = f"{route_reason}; {availability.reason}"
 
     return RoutePreviewResponse(
         input_hash=cache_key,
         cache_status=cache_status,
-        would_call_model=not semantic_reuse_eligible,
+        would_call_model=not semantic_reuse_eligible and availability.available,
         selected_model="semantic_cache" if semantic_reuse_eligible else decision.model,
         candidate_model=decision.model,
         candidate_tier=decision.tier,
+        model_available=semantic_reuse_eligible or availability.available,
+        model_availability_reason=(
+            None if semantic_reuse_eligible else availability.reason
+        ),
         route_reason=route_reason,
         semantic_cache_candidate=semantic_candidate is not None,
         semantic_cache_input_hash=(
@@ -639,6 +647,7 @@ async def route_estimate(payload: RouteRequest) -> RouteEstimateResponse:
         max_cost_tier=payload.max_cost_tier,
         routing_policy=payload.routing_policy,
     )
+    availability = model_availability(decision.model, settings)
     original_estimated_prompt_tokens = estimate_message_tokens(messages)
 
     if cache_status == "hit":
@@ -721,7 +730,7 @@ async def route_estimate(payload: RouteRequest) -> RouteEstimateResponse:
         )
 
     estimated_prompt_tokens = estimate_message_tokens(compression.messages)
-    estimated_completion_tokens = settings.preflight_default_completion_tokens
+    estimated_completion_tokens = payload.max_completion_tokens
     estimated_total_tokens = estimated_prompt_tokens + estimated_completion_tokens
     cost = estimate_model_cost(
         model=decision.model,
@@ -736,10 +745,12 @@ async def route_estimate(payload: RouteRequest) -> RouteEstimateResponse:
     return RouteEstimateResponse(
         input_hash=cache_key,
         cache_status=cache_status,
-        would_call_model=True,
+        would_call_model=availability.available,
         selected_model=decision.model,
         candidate_model=decision.model,
         candidate_tier=decision.tier,
+        model_available=availability.available,
+        model_availability_reason=availability.reason,
         price_source=cost.price_source,
         original_estimated_prompt_tokens=original_estimated_prompt_tokens,
         estimated_prompt_tokens=estimated_prompt_tokens,
@@ -771,7 +782,9 @@ async def route_estimate(payload: RouteRequest) -> RouteEstimateResponse:
         compressed_prompt_words=compression.compressed_words,
         compression_ratio=compression.compression_ratio,
         estimate_note=(
-            "Heuristic preflight estimate; actual provider token usage and cost may differ."
+            availability.reason
+            if not availability.available
+            else "Heuristic preflight estimate; actual provider token usage and cost may differ."
         ),
     )
 
@@ -946,12 +959,18 @@ async def call_model_with_logging(
     model: str,
     messages: list[dict[str, str]],
     call_logs: list[ModelCallLog],
+    max_completion_tokens: int = 64,
 ) -> ModelResult:
     call_start = time.perf_counter()
 
     try:
+        availability = model_availability(model, settings)
+        if not availability.available:
+            raise ModelUnavailableError(
+                availability.reason or f"{model} is not available."
+            )
         result = await asyncio.wait_for(
-            call_model(model, messages),
+            call_model(model, messages, max_completion_tokens),
             timeout=settings.model_call_timeout_seconds,
         )
     except Exception as exc:
@@ -1151,7 +1170,7 @@ async def route_request(payload: RouteRequest) -> RouteResponse:
     )
     model_messages = compression.messages
     estimated_prompt_tokens = estimate_message_tokens(model_messages)
-    estimated_completion_tokens = settings.preflight_default_completion_tokens
+    estimated_completion_tokens = payload.max_completion_tokens
     preflight_cost = estimate_model_cost(
         model=selected_model,
         prompt_tokens=estimated_prompt_tokens,
@@ -1219,6 +1238,7 @@ async def route_request(payload: RouteRequest) -> RouteResponse:
             selected_model,
             model_messages,
             call_logs,
+            payload.max_completion_tokens,
         )
         answer = result.answer
         quality_assessment = assess_answer_quality(answer)
@@ -1264,6 +1284,7 @@ async def route_request(payload: RouteRequest) -> RouteResponse:
                             fallback_model,
                             model_messages,
                             call_logs,
+                            payload.max_completion_tokens,
                         )
                     except Exception as exc:
                         fallback_skipped = True
@@ -1277,7 +1298,7 @@ async def route_request(payload: RouteRequest) -> RouteResponse:
                         answer = result.answer
                         quality_assessment = assess_answer_quality(answer)
                         quality_score = quality_assessment.score
-    except Exception:
+    except Exception as exc:
         latency_ms = int((time.perf_counter() - start) * 1000)
         route_reason = route_reason_with_cache_bypass(decision.reason, payload.bypass_cache)
         route_reason = route_reason_with_compression(route_reason, compression)
@@ -1329,11 +1350,8 @@ async def route_request(payload: RouteRequest) -> RouteResponse:
             call_logs,
         )
         raise HTTPException(
-            status_code=502,
-            detail=(
-                "Model provider call failed. Check the configured model backend "
-                "and the latest llm_calls.error_message row."
-            ),
+            status_code=503 if isinstance(exc, ModelUnavailableError) else 502,
+            detail=f"Model provider call failed: {model_error_message(exc)}",
         )
 
     response_cached = quality_score >= payload.quality_target

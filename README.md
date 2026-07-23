@@ -107,6 +107,7 @@ Open `http://localhost:8080/` for the primary RouteWise experience. The playgrou
 - compare input/output prices per 1,000 tokens
 - choose balanced, cost-first, or quality-first routing
 - set a quality target and optional dollar budget
+- set a maximum answer length to balance speed, detail, and cost
 - allow semantic cache reuse or force a fresh response
 - calculate preflight model, token, cache, budget, and cost information
 - run the prompt and inspect the answer, final model, cache type, quality, tokens, cost, and route reason
@@ -131,6 +132,7 @@ curl --max-time 70 -X POST http://localhost:8080/route \
     "routing_policy": "balanced",
     "allow_semantic_cache": false,
     "bypass_cache": false,
+    "max_completion_tokens": 64,
     "max_estimated_cost_usd": 0.01
   }' | python -m json.tool
 ```
@@ -173,16 +175,18 @@ When request logging is enabled, successful model answers are upserted into `cac
 
 ## Cost and Fallback Safety
 
-`POST /route/estimate` predicts prompt/completion tokens and estimated cost without calling a model. `max_estimated_cost_usd` applies the same estimate before a real call.
+`POST /route/estimate` predicts prompt/completion tokens and estimated cost without calling a model. The estimate uses the request's `max_completion_tokens`, so the playground's answer-length control affects both the estimate and the real provider limit. `max_estimated_cost_usd` applies the same estimate before a real call.
 
 - known over-budget first calls return HTTP 402 before provider usage
 - unknown prices report `budget_status: "unknown"` and do not create a false block
+- models missing required credentials are priced but marked unavailable and are not called
 - an over-budget fallback is skipped and the first answer is returned
 - `max_cost_tier` also caps fallback, so a small-tier request never jumps to a paid frontier model
 - a failed fallback returns the usable first answer and records the failed attempt
 - fresh answers enter cache only when they meet the request's quality target
 - local Ollama models use a built-in zero-dollar price
-- paid prices can be supplied through `MODEL_PRICES_JSON`
+- GPT-4o mini and GPT-4o have built-in standard prices
+- custom or updated paid prices can override built-ins through `MODEL_PRICES_JSON`
 
 Example:
 
@@ -190,7 +194,11 @@ Example:
 MODEL_PRICES_JSON={"gpt-4o-mini":["0.00015","0.00060"],"gpt-4o":["0.0025","0.0100"]}
 ```
 
-Values are input and output dollars per 1,000 tokens. Configure prices appropriate to the provider account; they can change over time.
+Values are input and output dollars per 1,000 tokens. The GPT defaults come from the official [GPT-4o mini](https://developers.openai.com/api/docs/models/gpt-4o-mini) and [GPT-4o](https://developers.openai.com/api/docs/models/gpt-4o) model pages. `MODEL_PRICES_JSON` remains available because provider prices and account terms can change.
+
+Pricing and availability are deliberately separate. RouteWise can show a useful estimate for a paid model without spending money, but a live OpenAI request requires `OPENAI_API_KEY`. The playground labels unavailable tiers and stops immediately with a setup message instead of waiting for a provider timeout.
+
+Local Ollama latency depends on model loading, context size, available unified memory, and answer length. `scripts/dev_start.sh` warms the configured local model, API requests keep it loaded for `OLLAMA_KEEP_ALIVE`, `OLLAMA_CONTEXT_LENGTH` avoids an unnecessarily large local context, and `max_completion_tokens` limits generation work. A cold first request can still take longer than later warm requests.
 
 ## API Surface
 
@@ -275,9 +283,11 @@ All settings use environment variables and can be placed in `.env`.
 | `MODEL_CALL_TIMEOUT_SECONDS` | `60` | Whole model-call timeout. |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server URL. |
 | `OLLAMA_HTTP_TIMEOUT_SECONDS` | `60` | Direct Ollama HTTP timeout. |
+| `OLLAMA_KEEP_ALIVE` | `30m` | How long Ollama keeps the local model loaded after a call. |
+| `OLLAMA_CONTEXT_LENGTH` | `2048` | Ollama context window used per local request; lower values use less memory. |
 | `READINESS_TIMEOUT_SECONDS` | `3` | Per-dependency readiness timeout. |
-| `MODEL_PRICES_JSON` | empty | Paid model input/output prices. |
-| `PREFLIGHT_DEFAULT_COMPLETION_TOKENS` | `256` | Completion assumption used before calls. |
+| `MODEL_PRICES_JSON` | empty | Optional paid-model price overrides. |
+| `PREFLIGHT_DEFAULT_COMPLETION_TOKENS` | `64` | Fallback completion limit for internal model calls. |
 | `EXACT_CACHE_TTL_SECONDS` | `86400` | Exact response lifetime in seconds. |
 | `SEMANTIC_CACHE_PREVIEW_ENABLED` | `true` | Builds and queries the local similarity index. |
 | `SEMANTIC_CACHE_SIMILARITY_THRESHOLD` | `0.80` | Advisory candidate threshold. |
@@ -303,10 +313,10 @@ python -m pytest -q
 Current expected result:
 
 ```text
-117 passed
+123 passed
 ```
 
-The suite covers cache keys and expiry, semantic scoring/reuse/hydration, all routing policies, prompt compression, quality/fallback, provider errors, cost and budget checks, database mapping, user profiles, history/metrics/report builders, diagnostics, readiness, authentication, throttling, request IDs, validation limits, playground/dashboard delivery, and end-to-end route behavior.
+The suite covers cache keys and expiry, semantic scoring/reuse/hydration, all routing policies, prompt compression, quality/fallback, provider availability and errors, built-in and overridden prices, output limits, cost and budget checks, database mapping, user profiles, history/metrics/report builders, diagnostics, readiness, authentication, throttling, request IDs, validation limits, playground/dashboard delivery, and end-to-end route behavior.
 
 CI runs compile checks and the full suite on Python 3.12 for pushes and pull requests.
 
@@ -332,6 +342,8 @@ docker compose --profile app up --build
 ```
 
 The app container connects to Ollama on the Mac through `host.docker.internal`.
+
+On an 8 GB Mac, Docker Desktop's default VM memory limit can compete with a local Ollama model. In Docker Desktop, open **Settings > Resources > Advanced**, set the memory limit to about 2 GB for this single-Postgres development setup, and apply the restart. Docker documents that the default allocation is 50% of host memory; larger container workloads may need a higher limit.
 
 ## Repository Layout
 

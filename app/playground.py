@@ -119,10 +119,16 @@ PLAYGROUND_HTML = """<!doctype html>
     summary { color: #445149; font-size: 12px; font-weight: 750; cursor: pointer; }
     .access-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin-top: 10px; }
     .estimate-empty, .response-empty { min-height: 118px; display: grid; place-items: center; color: var(--muted); text-align: center; }
-    .estimate-grid, .result-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .estimate-grid, .result-stats { display: grid; }
+    .estimate-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .result-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     .estimate-item, .result-stat { min-width: 0; padding: 12px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
     .estimate-item:nth-child(3n), .result-stat:nth-child(3n) { border-right: 0; }
     .estimate-item:nth-last-child(-n+3), .result-stat:nth-last-child(-n+3) { border-bottom: 0; }
+    .estimate-item:nth-child(3n) { border-right: 1px solid var(--line); }
+    .estimate-item:nth-child(2n) { border-right: 0; }
+    .estimate-item:nth-last-child(-n+3) { border-bottom: 1px solid var(--line); }
+    .estimate-item:nth-last-child(-n+2) { border-bottom: 0; }
     .stat-label { color: var(--muted); font-size: 11px; font-weight: 750; text-transform: uppercase; }
     .stat-value { margin-top: 3px; font-size: 15px; font-weight: 800; overflow-wrap: anywhere; }
     .answer { min-height: 130px; padding: 18px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 15px; line-height: 1.65; }
@@ -250,11 +256,23 @@ PLAYGROUND_HTML = """<!doctype html>
                 <input id="budget" type="number" min="0" step="0.000001" placeholder="No limit">
               </div>
             </div>
-            <div>
-              <label for="quality">Quality target</label>
-              <div class="range-row">
-                <input id="quality" type="range" min="0" max="1" step="0.05" value="0.65">
-                <output id="quality-value" for="quality">0.65</output>
+            <div class="field-row">
+              <div>
+                <label for="quality">Quality target</label>
+                <div class="range-row">
+                  <input id="quality" type="range" min="0" max="1" step="0.05" value="0.65">
+                  <output id="quality-value" for="quality">0.65</output>
+                </div>
+              </div>
+              <div>
+                <label for="output-limit">Maximum answer tokens</label>
+                <select id="output-limit">
+                  <option value="32">32 - fastest</option>
+                  <option value="64" selected>64 - quick</option>
+                  <option value="128">128 - standard</option>
+                  <option value="256">256 - detailed</option>
+                  <option value="512">512 - long</option>
+                </select>
               </div>
             </div>
             <div class="checks">
@@ -354,6 +372,11 @@ PLAYGROUND_HTML = """<!doctype html>
       return `${formatMoney(model.input_price_per_1k)} input / ${formatMoney(model.output_price_per_1k)} output per 1K`;
     }
 
+    function availabilityText(model) {
+      if (model.available) return 'Ready';
+      return model.required_env_var ? `${model.required_env_var} required` : 'Unavailable';
+    }
+
     function selectedUser() {
       return state.users.find(user => user.id === byId('user-select').value);
     }
@@ -384,14 +407,14 @@ PLAYGROUND_HTML = """<!doctype html>
       byId('tier').innerHTML = state.models.map(model => {
         const price = model.input_price_per_1k === null ? 'price unavailable' :
           Number(model.input_price_per_1k) === 0 && Number(model.output_price_per_1k) === 0 ? '$0 local' : 'priced';
-        return `<option value="${escapeHtml(model.tier)}">${escapeHtml(model.tier[0].toUpperCase() + model.tier.slice(1))} - ${escapeHtml(model.model)} - ${price}</option>`;
+        return `<option value="${escapeHtml(model.tier)}">${escapeHtml(model.tier[0].toUpperCase() + model.tier.slice(1))} - ${escapeHtml(model.model)} - ${price} - ${escapeHtml(availabilityText(model))}</option>`;
       }).join('');
       const savedTier = localStorage.getItem('routewise.tier') || 'small';
       if (state.models.some(model => model.tier === savedTier)) byId('tier').value = savedTier;
       byId('catalog').innerHTML = state.models.map(model => `
         <div class="catalog-row">
           <div class="tier">${escapeHtml(model.tier)}</div>
-          <div><div class="catalog-model">${escapeHtml(model.model)}</div><div class="catalog-price">${escapeHtml(formatPrice(model))}</div></div>
+          <div><div class="catalog-model">${escapeHtml(model.model)}</div><div class="catalog-price">${escapeHtml(formatPrice(model))} | ${escapeHtml(availabilityText(model))}</div></div>
         </div>`).join('');
       renderSelectedModel();
     }
@@ -399,7 +422,7 @@ PLAYGROUND_HTML = """<!doctype html>
     function renderSelectedModel() {
       const model = state.models.find(item => item.tier === byId('tier').value);
       if (!model) return;
-      byId('selected-model').innerHTML = `<strong>${escapeHtml(model.model)}</strong><span>${escapeHtml(formatPrice(model))}</span>`;
+      byId('selected-model').innerHTML = `<strong>${escapeHtml(model.model)}</strong><span>${escapeHtml(formatPrice(model))} | ${escapeHtml(availabilityText(model))}</span>`;
       localStorage.setItem('routewise.tier', model.tier);
     }
 
@@ -445,7 +468,8 @@ PLAYGROUND_HTML = """<!doctype html>
         routing_policy: byId('policy').value,
         allow_semantic_cache: byId('semantic-cache').checked,
         bypass_cache: byId('bypass-cache').checked,
-        max_estimated_cost_usd: budgetValue === '' ? null : Number(budgetValue)
+        max_estimated_cost_usd: budgetValue === '' ? null : Number(budgetValue),
+        max_completion_tokens: Number(byId('output-limit').value)
       };
     }
 
@@ -454,12 +478,24 @@ PLAYGROUND_HTML = """<!doctype html>
       byId('estimate-content').className = '';
       byId('estimate-content').innerHTML = `<div class="estimate-grid">
         <div class="estimate-item"><div class="stat-label">Selected route</div><div class="stat-value">${escapeHtml(data.selected_model)}</div></div>
+        <div class="estimate-item"><div class="stat-label">Model status</div><div class="stat-value">${data.model_available ? 'Ready' : 'Unavailable'}</div></div>
         <div class="estimate-item"><div class="stat-label">Estimated cost</div><div class="stat-value">${escapeHtml(formatMoney(data.estimated_total_cost_usd))}</div></div>
         <div class="estimate-item"><div class="stat-label">Estimated tokens</div><div class="stat-value">${data.estimated_total_tokens}</div></div>
+        <div class="estimate-item"><div class="stat-label">Answer limit</div><div class="stat-value">${data.estimated_completion_tokens}</div></div>
         <div class="estimate-item"><div class="stat-label">Cache</div><div class="stat-value">${escapeHtml(data.cache_status)}</div></div>
         <div class="estimate-item"><div class="stat-label">Budget</div><div class="stat-value">${escapeHtml(data.budget_status.replaceAll('_', ' '))}</div></div>
         <div class="estimate-item"><div class="stat-label">Price source</div><div class="stat-value">${escapeHtml(data.price_source.replaceAll('_', ' '))}</div></div>
       </div>`;
+    }
+
+    function invalidateEstimate() {
+      clearNotice();
+      byId('estimate-status').textContent = 'Not calculated';
+      byId('estimate-content').className = 'estimate-empty';
+      byId('estimate-content').textContent = 'Run an estimate';
+      if (byId('response-status').textContent === 'Failed') {
+        byId('response-status').textContent = 'Waiting';
+      }
     }
 
     function renderResponse(data) {
@@ -510,6 +546,7 @@ PLAYGROUND_HTML = """<!doctype html>
       try {
         const estimate = await calculateEstimate();
         if (kind === 'run') {
+          if (!estimate.model_available) throw new Error(estimate.model_availability_reason || 'The selected model is unavailable.');
           if (estimate.budget_exceeded) throw new Error('Estimated model cost exceeds the configured limit.');
           const data = await apiFetch('/route', {
             method: 'POST',
@@ -560,12 +597,24 @@ PLAYGROUND_HTML = """<!doctype html>
       const words = value.trim() ? value.trim().split(/\\s+/).length : 0;
       byId('word-count').textContent = `${words} ${words === 1 ? 'word' : 'words'}`;
       byId('char-count').textContent = `${value.length} / 100000`;
+      invalidateEstimate();
       updateControls();
     });
-    byId('quality').addEventListener('input', event => byId('quality-value').value = Number(event.target.value).toFixed(2));
-    byId('tier').addEventListener('change', renderSelectedModel);
+    byId('quality').addEventListener('input', event => {
+      byId('quality-value').value = Number(event.target.value).toFixed(2);
+      invalidateEstimate();
+    });
+    byId('tier').addEventListener('change', () => {
+      renderSelectedModel();
+      invalidateEstimate();
+    });
+    ['policy', 'output-limit', 'semantic-cache', 'bypass-cache'].forEach(id => {
+      byId(id).addEventListener('change', invalidateEstimate);
+    });
+    byId('budget').addEventListener('input', invalidateEstimate);
     byId('user-select').addEventListener('change', async event => {
       localStorage.setItem('routewise.userId', event.target.value);
+      invalidateEstimate();
       updateControls();
       await loadHistory();
     });

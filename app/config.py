@@ -19,10 +19,12 @@ class Settings(BaseSettings):
     model_call_timeout_seconds: float = 60.0
     ollama_base_url: str = "http://localhost:11434"
     ollama_http_timeout_seconds: float = 60.0
+    ollama_keep_alive: str = "30m"
+    ollama_context_length: int = 2048
     readiness_timeout_seconds: float = 3.0
     model_prices_json: str = ""
     openai_api_key: str = ""
-    preflight_default_completion_tokens: int = 256
+    preflight_default_completion_tokens: int = 64
 
     exact_cache_ttl_seconds: int = 86400
     semantic_cache_preview_enabled: bool = True

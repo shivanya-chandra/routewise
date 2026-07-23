@@ -45,6 +45,7 @@ class RouteRequest(BaseModel):
     allow_semantic_cache: bool = False
     routing_policy: Literal["balanced", "cost_first", "quality_first"] = "balanced"
     max_estimated_cost_usd: float | None = Field(default=None, ge=0.0)
+    max_completion_tokens: int = Field(default=64, ge=16, le=2048)
 
 
 class RouteResponse(BaseModel):
@@ -84,6 +85,8 @@ class RoutePreviewResponse(BaseModel):
     selected_model: str
     candidate_model: str | None = None
     candidate_tier: str | None = None
+    model_available: bool = True
+    model_availability_reason: str | None = None
     route_reason: str
     semantic_cache_candidate: bool = False
     semantic_cache_input_hash: str | None = None
@@ -105,6 +108,8 @@ class RouteEstimateResponse(BaseModel):
     selected_model: str
     candidate_model: str | None = None
     candidate_tier: str | None = None
+    model_available: bool = True
+    model_availability_reason: str | None = None
     price_source: Literal["cache", "configured", "built_in", "local_zero", "missing"]
     original_estimated_prompt_tokens: int
     estimated_prompt_tokens: int
@@ -181,6 +186,9 @@ class ModelCatalogItem(BaseModel):
     price_source: Literal["configured", "built_in", "local_zero", "missing"]
     input_price_per_1k: str | None = None
     output_price_per_1k: str | None = None
+    available: bool = True
+    availability_reason: str | None = None
+    required_env_var: str | None = None
 
 
 class ModelCatalogResponse(BaseModel):

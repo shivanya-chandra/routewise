@@ -1,8 +1,9 @@
 import asyncio
-import json
-import urllib.request
+import importlib
 from dataclasses import dataclass
 from typing import Any
+
+import httpx
 
 from app.config import settings
 
@@ -22,7 +23,11 @@ def ollama_model_name(model: str) -> str | None:
     return model.split("/", 1)[1]
 
 
-async def call_ollama(model: str, messages: list[dict[str, str]]) -> ModelResult:
+async def call_ollama(
+    model: str,
+    messages: list[dict[str, str]],
+    max_completion_tokens: int | None = None,
+) -> ModelResult:
     ollama_model = ollama_model_name(model)
     if ollama_model is None:
         raise ValueError(f"Not an Ollama model: {model}")
@@ -32,9 +37,20 @@ async def call_ollama(model: str, messages: list[dict[str, str]]) -> ModelResult
         "model": ollama_model,
         "messages": messages,
         "stream": False,
+        "keep_alive": settings.ollama_keep_alive,
+        "options": {
+            "num_predict": (
+                max_completion_tokens or settings.preflight_default_completion_tokens
+            ),
+            "num_ctx": settings.ollama_context_length,
+        },
     }
 
-    data = await asyncio.to_thread(post_ollama_chat, f"{base_url}/api/chat", payload)
+    data = await post_ollama_chat(
+        f"{base_url}/api/chat",
+        payload,
+        timeout_seconds=settings.ollama_http_timeout_seconds,
+    )
     answer = data.get("message", {}).get("content") or ""
     prompt_tokens = data.get("prompt_eval_count")
     completion_tokens = data.get("eval_count")
@@ -51,35 +67,28 @@ async def call_ollama(model: str, messages: list[dict[str, str]]) -> ModelResult
     )
 
 
-def post_ollama_chat(url: str, payload: dict[str, Any]) -> dict[str, Any]:
-    body = json.dumps(payload).encode("utf-8")
-    request = urllib.request.Request(
-        url,
-        data=body,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    timeout_seconds = settings.ollama_http_timeout_seconds
-
-    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-        response_body = response.read().decode("utf-8")
-
-    return json.loads(response_body)
+async def post_ollama_chat(
+    url: str,
+    payload: dict[str, Any],
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+        response = await client.post(url, json=payload)
+        response.raise_for_status()
+        return response.json()
 
 
-def get_ollama_tags(url: str, timeout_seconds: float) -> dict[str, Any]:
-    request = urllib.request.Request(url, method="GET")
-
-    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-        response_body = response.read().decode("utf-8")
-
-    return json.loads(response_body)
+async def get_ollama_tags(url: str, timeout_seconds: float) -> dict[str, Any]:
+    async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+        response = await client.get(url)
+        response.raise_for_status()
+        return response.json()
 
 
 async def list_ollama_models(timeout_seconds: float | None = None) -> list[str]:
     base_url = settings.ollama_base_url.rstrip("/")
     timeout = timeout_seconds or settings.ollama_http_timeout_seconds
-    data = await asyncio.to_thread(get_ollama_tags, f"{base_url}/api/tags", timeout)
+    data = await get_ollama_tags(f"{base_url}/api/tags", timeout)
 
     model_names: list[str] = []
     for model in data.get("models", []):
@@ -103,13 +112,21 @@ def ollama_model_available(model: str, available_models: list[str]) -> bool:
     )
 
 
-async def call_model(model: str, messages: list[dict[str, str]]) -> ModelResult:
+async def call_model(
+    model: str,
+    messages: list[dict[str, str]],
+    max_completion_tokens: int | None = None,
+) -> ModelResult:
     if ollama_model_name(model) is not None:
-        return await call_ollama(model, messages)
+        return await call_ollama(model, messages, max_completion_tokens)
 
-    from litellm import acompletion
+    litellm = await asyncio.to_thread(importlib.import_module, "litellm")
 
-    response = await acompletion(model=model, messages=messages)
+    response = await litellm.acompletion(
+        model=model,
+        messages=messages,
+        max_tokens=max_completion_tokens or settings.preflight_default_completion_tokens,
+    )
     answer = response.choices[0].message.content or ""
     usage = getattr(response, "usage", None)
 

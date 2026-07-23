@@ -70,7 +70,9 @@ def test_route_reuses_semantic_cache_only_with_opt_in(monkeypatch) -> None:
 def test_route_calls_model_when_semantic_cache_is_not_allowed(monkeypatch) -> None:
     called_models: list[str] = []
 
-    async def fake_model(request_id, model, messages, call_logs):
+    async def fake_model(
+        request_id, model, messages, call_logs, max_completion_tokens
+    ):
         called_models.append(model)
         return ModelResult("Fresh answer.", 4, 2, 6, {})
 
@@ -89,7 +91,9 @@ def test_route_calls_model_when_semantic_cache_is_not_allowed(monkeypatch) -> No
 def test_cache_bypass_disables_semantic_reuse(monkeypatch) -> None:
     called_models: list[str] = []
 
-    async def fake_model(request_id, model, messages, call_logs):
+    async def fake_model(
+        request_id, model, messages, call_logs, max_completion_tokens
+    ):
         called_models.append(model)
         return ModelResult("Fresh answer.", 4, 2, 6, {})
 

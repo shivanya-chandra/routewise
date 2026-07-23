@@ -23,7 +23,7 @@ def test_config_diagnostics_reports_missing_paid_model_setup() -> None:
     codes = [issue.code for issue in diagnostics.issues]
 
     assert diagnostics.status == "needs_attention"
-    assert codes.count("missing_model_price") == 2
+    assert codes.count("missing_model_price") == 0
     assert codes.count("missing_provider_api_key") == 1
     assert all(issue.severity == "warning" for issue in diagnostics.issues)
 
@@ -60,8 +60,8 @@ def test_config_diagnostics_endpoint_returns_issue_rows(monkeypatch) -> None:
     response = asyncio.run(config_diagnostics())
 
     assert response.status == "needs_attention"
-    assert len(response.issues) == 3
-    assert response.issues[0].code == "missing_model_price"
+    assert len(response.issues) == 1
+    assert response.issues[0].code == "missing_provider_api_key"
 
 
 def test_config_diagnostics_reports_unsafe_production_defaults() -> None:

@@ -61,7 +61,9 @@ def test_weak_answer_falls_back_and_aggregates_usage(monkeypatch) -> None:
     ]
     called_models: list[str] = []
 
-    async def fake_call(request_id, model, messages, call_logs):
+    async def fake_call(
+        request_id, model, messages, call_logs, max_completion_tokens
+    ):
         called_models.append(model)
         result = answers.pop(0)
         append_success(call_logs, request_id, model, result)
@@ -107,7 +109,9 @@ def test_provider_failure_returns_502_and_records_error_status(monkeypatch) -> N
 def test_failed_fallback_returns_first_answer(monkeypatch) -> None:
     call_count = 0
 
-    async def fake_call(request_id, model, messages, call_logs):
+    async def fake_call(
+        request_id, model, messages, call_logs, max_completion_tokens
+    ):
         nonlocal call_count
         call_count += 1
         if call_count == 2:
@@ -134,7 +138,9 @@ def test_failed_fallback_returns_first_answer(monkeypatch) -> None:
 def test_small_cost_cap_prevents_paid_fallback(monkeypatch) -> None:
     called_models: list[str] = []
 
-    async def fake_call(request_id, model, messages, call_logs):
+    async def fake_call(
+        request_id, model, messages, call_logs, max_completion_tokens
+    ):
         called_models.append(model)
         result = ModelResult("Usable but short.", 5, 3, 8, {})
         append_success(call_logs, request_id, model, result)
@@ -156,7 +162,9 @@ def test_small_cost_cap_prevents_paid_fallback(monkeypatch) -> None:
 def test_quality_first_policy_is_visible_in_route_result(monkeypatch) -> None:
     called_models: list[str] = []
 
-    async def fake_call(request_id, model, messages, call_logs):
+    async def fake_call(
+        request_id, model, messages, call_logs, max_completion_tokens
+    ):
         called_models.append(model)
         result = ModelResult("A useful response.", 5, 3, 8, {})
         append_success(call_logs, request_id, model, result)

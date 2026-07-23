@@ -43,13 +43,14 @@ Then:
 3. Choose balanced, cost-first, or quality-first routing.
 4. Set the quality target.
 5. Optionally set a dollar cost limit.
-6. Decide whether similar cached answers are allowed.
-7. Click **Estimate** to see the likely model, tokens, cost, cache state, and budget result without calling a model.
-8. Click **Run prompt** to get the answer.
+6. Choose a maximum answer length. Shorter limits are usually faster and cheaper; longer limits allow more detail.
+7. Decide whether similar cached answers are allowed.
+8. Click **Estimate** to see the likely model, tokens, cost, cache state, availability, and budget result without calling a model.
+9. Click **Run prompt** to get the answer.
 
 The response area shows the final model, exact or semantic cache usage, token counts, estimated cost, quality result, fallback count, and RouteWise's reason for the decision.
 
-The model menu displays the model and price configured for each tier. It is a maximum-model control rather than a command to force one exact model. RouteWise can still choose a cheaper model when that is the sensible route.
+The model menu displays the model, price, and availability for each tier. It is a maximum-model control rather than a command to force one exact model. RouteWise can still choose a cheaper model when that is the sensible route.
 
 ## Why It Exists
 
@@ -132,19 +133,23 @@ The response and database record show whether compression happened, the original
 
 ### 7. RouteWise estimates cost before spending money
 
-Before calling a model, RouteWise estimates prompt tokens and assumes a configurable number of completion tokens.
+Before calling a model, RouteWise estimates prompt tokens and uses the answer-length limit selected by the user as the maximum number of completion tokens.
 
-For local Ollama, estimated dollar cost is zero. For paid models, RouteWise uses prices configured by the owner.
+For local Ollama, estimated dollar cost is zero. RouteWise includes standard built-in prices for GPT-4o mini and GPT-4o. The owner can override those prices when provider pricing or account terms change.
 
 The caller can set a maximum estimated cost. If a known price exceeds that budget, RouteWise stops before contacting the provider and returns an HTTP 402 response.
 
 If the model price is unknown, RouteWise says the budget result is unknown. It does not pretend the request is free, and it does not block based on an invented number.
 
+Knowing a model's price does not mean RouteWise has permission to call it. OpenAI models need `OPENAI_API_KEY`. Without that key, the page still shows their estimated cost, labels them unavailable, and stops immediately with a setup message. It does not make the user wait for a request that cannot succeed.
+
 ### 8. RouteWise calls the chosen model
 
 The default small model is `llama3.2` running locally through Ollama. Hosted models are called through LiteLLM.
 
-A timeout prevents one provider call from waiting forever. Provider errors are converted into a clear HTTP 502 response and can be recorded in the database with their latency and error message.
+A timeout prevents one provider call from waiting forever. RouteWise uses non-blocking HTTP for Ollama, so a slow generation does not freeze estimates or other API requests. Missing credentials return a clear setup error; other provider failures return a detailed gateway error. Both can be recorded in the database with their latency and error message.
+
+The startup helper sends a tiny warm-up request and RouteWise asks Ollama to keep the model loaded for 30 minutes. RouteWise also uses a smaller 2048-token local context so the default model fits more reliably on an 8 GB Mac. This reduces loading delays and memory pressure. The first request after Ollama starts can still be slower, and longer answer limits naturally take more generation time.
 
 ### 9. RouteWise checks answer quality
 
@@ -284,6 +289,8 @@ The startup helper avoids the problems we encountered earlier:
 
 If Docker Desktop is not ready, the helper stops with a direct message. If Ollama is missing, it tells you before Uvicorn starts.
 
+An 8 GB Mac has little room for Docker and a local AI model at the same time. Docker Desktop normally offers half of the computer's memory to its Linux virtual machine. For this project, which only needs one small PostgreSQL container, open **Docker Desktop > Settings > Resources > Advanced** and use a memory limit of about 2 GB. This leaves more memory for Ollama. Increase it again if you later run larger container workloads.
+
 ## How to Test It
 
 Run:
@@ -295,10 +302,10 @@ python -m pytest -q
 The current expected result is:
 
 ```text
-117 passed
+123 passed
 ```
 
-That means 117 automated scenarios behaved as expected. The tests include small functions, profile management, web-page delivery, API behavior, security controls, semantic reuse, restart hydration, budget blocking, fallback, provider errors, metrics, reporting, and complete route flows.
+That means 123 automated scenarios behaved as expected. The tests include small functions, profile management, web-page delivery, API behavior, security controls, semantic reuse, restart hydration, budget blocking, fallback, model pricing and availability, Ollama output limits, provider errors, metrics, reporting, and complete route flows.
 
 Passing tests do not mean every future provider and deployment can never fail. They mean the behavior RouteWise owns is repeatable and protected against known regressions.
 

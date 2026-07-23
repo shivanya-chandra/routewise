@@ -12,6 +12,11 @@ def test_unknown_model_cost_is_none_without_price_configuration() -> None:
     assert estimate_cost_usd("unknown/model", 100, 100) is None
 
 
+def test_openai_models_have_current_built_in_prices() -> None:
+    assert estimate_cost_usd("gpt-4o-mini", 1000, 1000) == Decimal("0.00075000")
+    assert estimate_cost_usd("gpt-4o", 1000, 1000) == Decimal("0.01250000")
+
+
 def test_model_prices_can_be_loaded_from_json() -> None:
     prices = load_model_prices(
         '{"paid/model": {"input_per_1k": "0.01", "output_per_1k": "0.02"}}'

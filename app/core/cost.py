@@ -6,6 +6,8 @@ from typing import Any
 
 MODEL_PRICES_PER_1K_TOKENS: dict[str, tuple[Decimal, Decimal]] = {
     "ollama/llama3.2": (Decimal("0"), Decimal("0")),
+    "gpt-4o-mini": (Decimal("0.00015"), Decimal("0.00060")),
+    "gpt-4o": (Decimal("0.0025"), Decimal("0.0100")),
 }
 
 
