@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ChatMessage(BaseModel):
@@ -8,6 +8,30 @@ class ChatMessage(BaseModel):
 
     role: Literal["system", "user", "assistant"]
     content: str = Field(min_length=1, max_length=100_000)
+
+
+class UserProfileCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    display_name: str = Field(min_length=1, max_length=80)
+
+    @field_validator("display_name")
+    @classmethod
+    def clean_display_name(cls, value: str) -> str:
+        cleaned = " ".join(value.split())
+        if not cleaned:
+            raise ValueError("Display name cannot be blank.")
+        return cleaned
+
+
+class UserProfileItem(BaseModel):
+    id: str
+    display_name: str
+    created_at: str
+
+
+class UserProfilesResponse(BaseModel):
+    users: list[UserProfileItem]
 
 
 class RouteRequest(BaseModel):

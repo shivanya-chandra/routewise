@@ -24,6 +24,33 @@ Its job is to answer five questions:
 
 That makes RouteWise an AI routing gateway.
 
+## How a Person Uses It
+
+Open:
+
+```text
+http://localhost:8080/
+```
+
+This is the RouteWise playground. A person does not need to write a POST request or use Swagger for normal testing.
+
+First, create a local user profile. The profile gives RouteWise a stable user ID so the page can show that person's recent requests. These profiles are not passwords or internet login accounts. They are simple local identities for this project.
+
+Then:
+
+1. Enter a prompt.
+2. Choose the maximum model tier.
+3. Choose balanced, cost-first, or quality-first routing.
+4. Set the quality target.
+5. Optionally set a dollar cost limit.
+6. Decide whether similar cached answers are allowed.
+7. Click **Estimate** to see the likely model, tokens, cost, cache state, and budget result without calling a model.
+8. Click **Run prompt** to get the answer.
+
+The response area shows the final model, exact or semantic cache usage, token counts, estimated cost, quality result, fallback count, and RouteWise's reason for the decision.
+
+The model menu displays the model and price configured for each tier. It is a maximum-model control rather than a command to force one exact model. RouteWise can still choose a cheaper model when that is the sensible route.
+
 ## Why It Exists
 
 AI models can charge for the text sent to them and the text they generate. Larger models also tend to be slower. A real application therefore needs more than a button that says "call the AI." It needs a decision layer.
@@ -177,7 +204,7 @@ This stores a numeric representation of prompts so RouteWise can find close rewr
 
 ### PostgreSQL
 
-PostgreSQL is the permanent record. It stores requests, model attempts, and cache entries. It is slower than an in-memory lookup but survives process restarts and supports history and reports.
+PostgreSQL is the permanent record. It stores user profiles, requests, model attempts, and cache entries. It is slower than an in-memory lookup but survives process restarts and supports history and reports.
 
 ## What the Database Records
 
@@ -186,6 +213,17 @@ The `llm_requests` table records one overall outcome per route request. It inclu
 The `llm_calls` table records each attempt to contact a model. A request may have zero calls because cache answered it, one normal call, or two calls when fallback happened.
 
 The `cache_entries` table stores the latest successful answer for each exact prompt hash, together with the original messages needed to rebuild the semantic index.
+
+The `user_profiles` table stores the local names created through the playground. Deleting a profile does not erase historical request records.
+
+## Playground and Operations
+
+RouteWise has two web views:
+
+- `http://localhost:8080/` is where a person creates a profile, writes prompts, controls routing and cost, and reads answers.
+- `http://localhost:8080/dashboard` is where an operator reviews system-wide volume, cache savings, reliability, tokens, latency, and cost.
+
+Swagger at `http://localhost:8080/docs` remains available for developers who want to call each API directly.
 
 ## What the Dashboard Shows
 
@@ -254,13 +292,13 @@ Run:
 python -m pytest -q
 ```
 
-The final expected result is:
+The current expected result is:
 
 ```text
-110 passed
+117 passed
 ```
 
-That means 110 automated scenarios behaved as expected. The tests include small functions, API behavior, security controls, semantic reuse, restart hydration, budget blocking, fallback, provider errors, metrics, reporting, and complete route flows.
+That means 117 automated scenarios behaved as expected. The tests include small functions, profile management, web-page delivery, API behavior, security controls, semantic reuse, restart hydration, budget blocking, fallback, provider errors, metrics, reporting, and complete route flows.
 
 Passing tests do not mean every future provider and deployment can never fail. They mean the behavior RouteWise owns is repeatable and protected against known regressions.
 
@@ -276,7 +314,7 @@ A healthy process can still be unready. For example, FastAPI may be running whil
 
 ## What Security Was Added
 
-The final version can require an `X-API-Key` header on every route-related endpoint. This prevents an unauthenticated caller from spending model tokens when the service is exposed.
+The final version can require an `X-API-Key` header on route and profile endpoints. The playground has an API access field for this key. This prevents an unauthenticated caller from spending model tokens or changing profiles when the service is exposed.
 
 It can also limit real route requests per minute and returns a request ID header for tracing one HTTP request through logs.
 
@@ -296,8 +334,9 @@ RouteWise v1 now completes the project loop:
 6. Judge the first answer and fall back safely when needed.
 7. Record every important outcome.
 8. Restore cached knowledge after restart.
-9. Summarize system behavior through APIs and a dashboard.
-10. Protect the route surface and verify behavior automatically.
+9. Let people create profiles and use routing, cache, quality, and cost controls through a real web interface.
+10. Summarize system behavior through APIs and an operations dashboard.
+11. Protect the route surface and verify behavior automatically.
 
 There are always possible future upgrades, such as a large embedding model, a learned quality judge, or distributed cloud infrastructure. Those are extensions, not missing pieces in this v1 goal.
 

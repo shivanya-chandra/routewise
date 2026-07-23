@@ -27,6 +27,10 @@ routewise_curl --fail --silent --show-error --max-time 15 \
   -d '{"user_id":"smoke-test","messages":[{"role":"user","content":"Say hello in one sentence."}],"quality_target":0,"max_cost_tier":"small"}'
 printf "\n"
 
+printf "Playground: "
+curl --fail --silent --show-error --max-time 10 \
+  -o /dev/null -w "%{http_code}\n" "$BASE_URL/"
+
 printf "Dashboard: "
 curl --fail --silent --show-error --max-time 10 \
   -o /dev/null -w "%{http_code}\n" "$BASE_URL/dashboard"

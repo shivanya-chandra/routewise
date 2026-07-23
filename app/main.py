@@ -59,6 +59,13 @@ from app.db.metrics import (
     fetch_model_usage,
     fetch_routing_decisions,
 )
+from app.db.users import (
+    DuplicateUserProfileError,
+    create_user_profile,
+    delete_user_profile,
+    fetch_user_profiles,
+)
+from app.playground import playground_response
 from app.schemas import (
     ConfigDiagnosticIssueItem,
     ConfigDiagnosticsResponse,
@@ -78,6 +85,9 @@ from app.schemas import (
     RouteResponse,
     RoutingDecisionItem,
     RoutingDecisionsResponse,
+    UserProfileCreate,
+    UserProfileItem,
+    UserProfilesResponse,
 )
 
 
@@ -129,7 +139,7 @@ if cors_origins:
         CORSMiddleware,
         allow_origins=cors_origins,
         allow_credentials=False,
-        allow_methods=["GET", "POST"],
+        allow_methods=["GET", "POST", "DELETE"],
         allow_headers=["Content-Type", "X-API-Key", "X-Request-ID"],
     )
 
@@ -139,7 +149,7 @@ async def request_guard(request: Request, call_next):
     request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
     request.state.request_id = request_id
 
-    if request.url.path.startswith("/route"):
+    if request.url.path.startswith(("/route", "/users")):
         provided_key = request.headers.get("X-API-Key")
         if not api_key_is_valid(settings.routewise_api_key, provided_key):
             return JSONResponse(
@@ -172,9 +182,72 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/", include_in_schema=False)
+async def playground():
+    return playground_response()
+
+
 @app.get("/dashboard", include_in_schema=False)
 async def dashboard():
     return dashboard_response()
+
+
+@app.get("/users", response_model=UserProfilesResponse)
+async def user_profiles() -> UserProfilesResponse:
+    try:
+        users = await fetch_user_profiles()
+    except Exception:
+        logger.exception("Failed to fetch user profiles")
+        raise HTTPException(
+            status_code=503,
+            detail="User profiles unavailable. Check Postgres and local tables.",
+        )
+
+    return UserProfilesResponse(
+        users=[
+            UserProfileItem(
+                id=user.id,
+                display_name=user.display_name,
+                created_at=user.created_at.isoformat(),
+            )
+            for user in users
+        ]
+    )
+
+
+@app.post("/users", response_model=UserProfileItem, status_code=201)
+async def add_user_profile(payload: UserProfileCreate) -> UserProfileItem:
+    try:
+        user = await create_user_profile(payload.display_name)
+    except DuplicateUserProfileError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except Exception:
+        logger.exception("Failed to create user profile")
+        raise HTTPException(
+            status_code=503,
+            detail="User profile could not be created. Check Postgres and local tables.",
+        )
+
+    return UserProfileItem(
+        id=user.id,
+        display_name=user.display_name,
+        created_at=user.created_at.isoformat(),
+    )
+
+
+@app.delete("/users/{user_id}", status_code=204)
+async def remove_user_profile(user_id: str) -> Response:
+    try:
+        deleted = await delete_user_profile(user_id)
+    except Exception:
+        logger.exception("Failed to delete user profile")
+        raise HTTPException(
+            status_code=503,
+            detail="User profile could not be deleted. Check Postgres and local tables.",
+        )
+    if not deleted:
+        raise HTTPException(status_code=404, detail="User profile not found.")
+    return Response(status_code=204)
 
 
 def readiness_status(checks: dict[str, ReadinessCheck]) -> str:
@@ -233,7 +306,8 @@ async def database_readiness_check() -> ReadinessCheck:
                     select
                         to_regclass('public.llm_requests') as llm_requests,
                         to_regclass('public.llm_calls') as llm_calls,
-                        to_regclass('public.cache_entries') as cache_entries
+                        to_regclass('public.cache_entries') as cache_entries,
+                        to_regclass('public.user_profiles') as user_profiles
                     """
                 )
             )
@@ -256,7 +330,7 @@ async def database_readiness_check() -> ReadinessCheck:
 
 
 def missing_database_tables(table_row: dict[str, object]) -> list[str]:
-    required = ("llm_requests", "llm_calls", "cache_entries")
+    required = ("llm_requests", "llm_calls", "cache_entries", "user_profiles")
     return [table for table in required if table_row.get(table) is None]
 
 

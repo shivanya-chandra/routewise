@@ -38,6 +38,7 @@ def test_database_readiness_detects_missing_tables() -> None:
             "llm_requests": "llm_requests",
             "llm_calls": None,
             "cache_entries": "cache_entries",
+            "user_profiles": "user_profiles",
         }
     )
 

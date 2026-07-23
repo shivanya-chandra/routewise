@@ -18,8 +18,13 @@ DASHBOARD_HTML = """<!doctype html>
     header { border-bottom: 1px solid var(--line); background: var(--panel); }
     .bar, main { width: min(1180px, calc(100% - 32px)); margin: 0 auto; }
     .bar { min-height: 64px; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+    .bar-main { display: flex; align-items: center; }
     .brand { font-size: 20px; font-weight: 750; }
+    .brand a { color: inherit; text-decoration: none; }
     .brand span { color: var(--muted); font-size: 13px; font-weight: 500; margin-left: 10px; }
+    nav { display: flex; align-items: center; gap: 4px; margin-left: 20px; }
+    nav a { color: var(--muted); padding: 8px 10px; text-decoration: none; font-weight: 650; }
+    nav a.active { color: var(--green); }
     button { min-height: 36px; border: 1px solid #9aa4b2; border-radius: 6px; background: #fff; color: var(--ink); padding: 0 14px; font: inherit; font-weight: 650; cursor: pointer; }
     button:hover { border-color: var(--green); color: var(--green); }
     main { padding: 28px 0 48px; }
@@ -42,12 +47,12 @@ DASHBOARD_HTML = """<!doctype html>
     .recommendation { border-left: 3px solid var(--green); background: var(--panel); padding: 11px 14px; }
     .recommendation.warning { border-left-color: var(--amber); }
     #error { display: none; border-left: 3px solid var(--red); background: #fff; color: var(--red); padding: 12px 14px; margin-bottom: 16px; }
-    @media (max-width: 800px) { .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } .brand span { display: block; margin: 0; } }
-    @media (max-width: 460px) { .bar, main { width: min(100% - 20px, 1180px); } .metrics { grid-template-columns: 1fr; } .status { align-items: flex-start; flex-direction: column; } }
+    @media (max-width: 800px) { .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } .brand span { display: block; margin: 0; } nav { margin-left: 8px; } nav a { padding: 8px 6px; font-size: 12px; } }
+    @media (max-width: 460px) { .bar, main { width: min(100% - 20px, 1180px); } .bar { gap: 8px; } .brand span { display: none; } nav { margin-left: 4px; } nav a:last-child { display: none; } .metrics { grid-template-columns: 1fr; } .status { align-items: flex-start; flex-direction: column; } }
   </style>
 </head>
 <body>
-  <header><div class="bar"><div class="brand">RouteWise <span>Operations</span></div><button id="refresh" type="button">Refresh</button></div></header>
+  <header><div class="bar"><div class="bar-main"><div class="brand"><a href="/">RouteWise</a> <span>Operations</span></div><nav aria-label="Primary"><a href="/">Playground</a><a class="active" href="/dashboard">Operations</a><a href="/docs">API</a></nav></div><button id="refresh" type="button">Refresh</button></div></header>
   <main>
     <div class="status"><div><h1>Routing overview</h1><div id="updated" class="muted">Loading current data...</div></div></div>
     <div id="error"></div>

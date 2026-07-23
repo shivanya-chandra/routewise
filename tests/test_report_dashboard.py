@@ -130,3 +130,18 @@ def test_dashboard_is_a_real_html_operations_view() -> None:
     assert "RouteWise Operations" in response.text
     assert "/metrics/report" in response.text
     assert "Recent requests" in response.text
+
+
+def test_root_is_the_interactive_routewise_playground() -> None:
+    client = TestClient(app)
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert "RouteWise Playground" in response.text
+    assert 'id="user-select"' in response.text
+    assert 'id="tier"' in response.text
+    assert 'id="budget"' in response.text
+    assert "/route/estimate" in response.text
+    assert "/route" in response.text
+    assert "/models/catalog" in response.text

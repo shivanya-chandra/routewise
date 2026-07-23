@@ -11,6 +11,15 @@ class Base(DeclarativeBase):
     pass
 
 
+class UserProfile(Base):
+    __tablename__ = "user_profiles"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    display_name: Mapped[str] = mapped_column(String(80))
+    normalized_name: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class LLMRequest(Base):
     __tablename__ = "llm_requests"
 

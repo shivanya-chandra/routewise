@@ -20,6 +20,7 @@ The v1 project is feature complete for local development and portfolio demonstra
 - structured quality labels and strongest-allowed-tier fallback
 - request, model-call, cost, latency, cache, compression, and policy logging
 - summary, per-model, per-route, history, diagnostics, catalog, and report APIs
+- a user-facing playground with persistent profiles, prompt execution, routing controls, and cost estimates
 - a responsive operations dashboard at `/dashboard`
 - optional API-key protection, route throttling, CORS configuration, request IDs, and input limits
 - Docker packaging, health checks, a startup helper, a smoke test, and GitHub Actions CI
@@ -84,6 +85,7 @@ curl -s http://localhost:8080/readiness | python -m json.tool
 
 Useful URLs:
 
+- playground: `http://localhost:8080/`
 - API docs: `http://localhost:8080/docs`
 - operations dashboard: `http://localhost:8080/dashboard`
 - health: `http://localhost:8080/health`
@@ -94,6 +96,25 @@ Stop the API with `Control-C`. Stop local containers with:
 ```bash
 docker compose down
 ```
+
+## Web Playground
+
+Open `http://localhost:8080/` for the primary RouteWise experience. The playground lets a user:
+
+- create, select, and delete a persistent local profile
+- enter a prompt without writing an HTTP request
+- choose a maximum model tier and see the configured model for every tier
+- compare input/output prices per 1,000 tokens
+- choose balanced, cost-first, or quality-first routing
+- set a quality target and optional dollar budget
+- allow semantic cache reuse or force a fresh response
+- calculate preflight model, token, cache, budget, and cost information
+- run the prompt and inspect the answer, final model, cache type, quality, tokens, cost, and route reason
+- review recent requests for the selected profile
+
+The maximum-model control is a routing ceiling, not a forced exact-model call. RouteWise may choose a cheaper tier when prompt complexity and policy allow it. This preserves the core purpose of the router.
+
+Profiles are lightweight local RouteWise identities used to group request history. They are not login accounts or an internet-ready authentication system.
 
 ## Route Request
 
@@ -175,8 +196,12 @@ Values are input and output dollars per 1,000 tokens. Configure prices appropria
 
 | Method | Path | Purpose |
 | --- | --- | --- |
+| `GET` | `/` | User-facing RouteWise playground. |
 | `GET` | `/health` | Process health check. |
 | `GET` | `/readiness` | Cache, database, and Ollama dependency checks. |
+| `GET` | `/users` | List persistent local user profiles. |
+| `POST` | `/users` | Create a local user profile. |
+| `DELETE` | `/users/{user_id}` | Delete a local profile while retaining request history. |
 | `POST` | `/route` | Route and answer a request. |
 | `POST` | `/route/preview` | Show cache/routing/compression decisions without a model call. |
 | `POST` | `/route/estimate` | Show token, cost, budget, and semantic-cache preflight data. |
@@ -198,6 +223,7 @@ Values are input and output dollars per 1,000 tokens. Configure prices appropria
 - `llm_requests`: one row for each route outcome, including cache, policy, budget, quality, compression, and fallback fields
 - `llm_calls`: one row per provider attempt, including status, tokens, cost, latency, and errors
 - `cache_entries`: latest successful answer and serialized original messages per exact input hash
+- `user_profiles`: persistent local display names used by the playground
 
 Inspect the latest requests without SQL:
 
@@ -235,7 +261,7 @@ All settings use environment variables and can be placed in `.env`.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `APP_ENVIRONMENT` | `development` | Enables additional production diagnostics when set to `production`. |
-| `ROUTEWISE_API_KEY` | empty | Protects all `/route*` endpoints when set. |
+| `ROUTEWISE_API_KEY` | empty | Protects all `/route*` and `/users*` endpoints when set. |
 | `RATE_LIMIT_REQUESTS_PER_MINUTE` | `0` | Per-process `/route` limit; zero disables it. |
 | `CORS_ALLOWED_ORIGINS` | empty | Comma-separated allowed browser origins. |
 | `CACHE_BACKEND` | `memory` | `memory` or `redis`. |
@@ -274,13 +300,13 @@ Run everything:
 python -m pytest -q
 ```
 
-Final expected result:
+Current expected result:
 
 ```text
-110 passed
+117 passed
 ```
 
-The suite covers cache keys and expiry, semantic scoring/reuse/hydration, all routing policies, prompt compression, quality/fallback, provider errors, cost and budget checks, database mapping, history/metrics/report builders, diagnostics, readiness, authentication, throttling, request IDs, validation limits, dashboard delivery, and end-to-end route behavior.
+The suite covers cache keys and expiry, semantic scoring/reuse/hydration, all routing policies, prompt compression, quality/fallback, provider errors, cost and budget checks, database mapping, user profiles, history/metrics/report builders, diagnostics, readiness, authentication, throttling, request IDs, validation limits, playground/dashboard delivery, and end-to-end route behavior.
 
 CI runs compile checks and the full suite on Python 3.12 for pushes and pull requests.
 
@@ -314,6 +340,7 @@ app/
   main.py                 HTTP lifecycle, endpoints, and route pipeline
   schemas.py              request/response validation contracts
   config.py               environment-backed settings
+  playground.py           user-facing prompt and cost-control application
   dashboard.py            dependency-free operations dashboard
   core/
     cache.py              exact cache and hybrid semantic index
@@ -328,11 +355,12 @@ app/
     models.py             SQLAlchemy tables
     session.py            engine, sessions, and additive migrations
     repository.py         route/model/cache persistence
+    users.py              persistent user-profile operations
     history.py            recent request query and shaping
     metrics.py            aggregate, model, and route metrics
 scripts/
   dev_start.sh            guarded local startup
-  smoke_test.sh           health, readiness, preview, and dashboard checks
+  smoke_test.sh           health, readiness, preview, playground, and dashboard checks
   run_eval.py             command-line evaluation summary
 tests/                    unit, integration, and end-to-end regression suite
 ```
@@ -343,6 +371,7 @@ tests/                    unit, integration, and end-to-end regression suite
 - Local hash embeddings improve close-text matching, but deep paraphrase detection needs a dedicated embedding model/vector store.
 - Preflight token counts are heuristics; provider-reported usage remains authoritative.
 - API-key middleware and the in-memory rate limiter are intentionally lightweight. Internet-facing deployments should also use TLS, a secrets manager, centralized rate limiting, and managed observability.
+- Playground profiles group local usage history; production identity requires real authentication and authorization.
 - Paid providers require credentials and current prices; the automated suite mocks provider calls and never spends paid tokens.
 
 Within those boundaries, RouteWise v1 is a complete working routing gateway: it makes decisions, controls cost, reuses work, records outcomes, explains behavior, and exposes an operator-facing view of the system.
