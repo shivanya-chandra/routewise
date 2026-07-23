@@ -45,7 +45,7 @@ class RouteRequest(BaseModel):
     allow_semantic_cache: bool = False
     routing_policy: Literal["balanced", "cost_first", "quality_first"] = "balanced"
     max_estimated_cost_usd: float | None = Field(default=None, ge=0.0)
-    max_completion_tokens: int = Field(default=64, ge=16, le=2048)
+    max_completion_tokens: int = Field(default=256, ge=16, le=2048)
 
 
 class RouteResponse(BaseModel):
@@ -72,6 +72,9 @@ class RouteResponse(BaseModel):
     completion_tokens: int | None = None
     total_tokens: int | None = None
     estimated_cost_usd: float | None = None
+    finish_reason: str | None = None
+    answer_truncated: bool = False
+    max_completion_tokens: int | None = None
     prompt_compressed: bool = False
     original_prompt_words: int | None = None
     compressed_prompt_words: int | None = None

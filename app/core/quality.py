@@ -8,12 +8,23 @@ class QualityAssessment:
     reason: str
 
 
-def assess_answer_quality(answer: str) -> QualityAssessment:
+def assess_answer_quality(
+    answer: str,
+    *,
+    truncated: bool = False,
+) -> QualityAssessment:
     if not answer or not answer.strip():
         return QualityAssessment(
             score=0.0,
             label="empty",
             reason="Answer is empty.",
+        )
+
+    if truncated:
+        return QualityAssessment(
+            score=0.30,
+            label="truncated",
+            reason="Answer reached the configured output-token limit before finishing.",
         )
 
     lower_answer = answer.lower()

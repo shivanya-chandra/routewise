@@ -30,6 +30,7 @@ from app.core.model_client import (
     ModelResult,
     call_model,
     list_ollama_models,
+    messages_with_completion_budget,
     ollama_model_available,
     ollama_model_name,
 )
@@ -729,7 +730,11 @@ async def route_estimate(payload: RouteRequest) -> RouteEstimateResponse:
             estimate_note="Semantic cache reuse is eligible; no model call cost is expected.",
         )
 
-    estimated_prompt_tokens = estimate_message_tokens(compression.messages)
+    provider_messages = messages_with_completion_budget(
+        compression.messages,
+        payload.max_completion_tokens,
+    )
+    estimated_prompt_tokens = estimate_message_tokens(provider_messages)
     estimated_completion_tokens = payload.max_completion_tokens
     estimated_total_tokens = estimated_prompt_tokens + estimated_completion_tokens
     cost = estimate_model_cost(
@@ -917,7 +922,7 @@ async def hydrate_cache_entries(entries: list[CacheEntryLog]) -> int:
     hydrated_count = 0
     for entry in entries:
         messages = deserialize_cached_prompt(entry.prompt)
-        if messages is None:
+        if messages is None or request_hash(messages) != entry.input_hash:
             continue
         await cache_client.set(
             entry.input_hash,
@@ -959,7 +964,7 @@ async def call_model_with_logging(
     model: str,
     messages: list[dict[str, str]],
     call_logs: list[ModelCallLog],
-    max_completion_tokens: int = 64,
+    max_completion_tokens: int = 256,
 ) -> ModelResult:
     call_start = time.perf_counter()
 
@@ -1161,6 +1166,7 @@ async def route_request(payload: RouteRequest) -> RouteResponse:
     fallback_count = 0
     fallback_skipped = False
     fallback_skip_reason = None
+    answer_truncated = False
     quality_assessment: QualityAssessment | None = None
     compression = compress_messages(
         messages,
@@ -1168,7 +1174,10 @@ async def route_request(payload: RouteRequest) -> RouteResponse:
         word_threshold=settings.prompt_compression_word_threshold,
         target_words=settings.prompt_compression_target_words,
     )
-    model_messages = compression.messages
+    model_messages = messages_with_completion_budget(
+        compression.messages,
+        payload.max_completion_tokens,
+    )
     estimated_prompt_tokens = estimate_message_tokens(model_messages)
     estimated_completion_tokens = payload.max_completion_tokens
     preflight_cost = estimate_model_cost(
@@ -1241,10 +1250,20 @@ async def route_request(payload: RouteRequest) -> RouteResponse:
             payload.max_completion_tokens,
         )
         answer = result.answer
-        quality_assessment = assess_answer_quality(answer)
+        answer_truncated = result.finish_reason == "length"
+        quality_assessment = assess_answer_quality(
+            answer,
+            truncated=answer_truncated,
+        )
         quality_score = quality_assessment.score
 
-        if quality_score < payload.quality_target:
+        if quality_score < payload.quality_target and answer_truncated:
+            fallback_skipped = True
+            fallback_skip_reason = (
+                "fallback skipped because a stronger model cannot fix the configured "
+                "output-token limit; increase max_completion_tokens"
+            )
+        elif quality_score < payload.quality_target:
             fallback_decision = choose_fallback_model(
                 current_tier=decision.tier,
                 max_cost_tier=payload.max_cost_tier,
@@ -1296,7 +1315,11 @@ async def route_request(payload: RouteRequest) -> RouteResponse:
                         final_model = fallback_model
                         result = fallback_result
                         answer = result.answer
-                        quality_assessment = assess_answer_quality(answer)
+                        answer_truncated = result.finish_reason == "length"
+                        quality_assessment = assess_answer_quality(
+                            answer,
+                            truncated=answer_truncated,
+                        )
                         quality_score = quality_assessment.score
     except Exception as exc:
         latency_ms = int((time.perf_counter() - start) * 1000)
@@ -1354,7 +1377,9 @@ async def route_request(payload: RouteRequest) -> RouteResponse:
             detail=f"Model provider call failed: {model_error_message(exc)}",
         )
 
-    response_cached = quality_score >= payload.quality_target
+    response_cached = (
+        not answer_truncated and quality_score >= payload.quality_target
+    )
     if response_cached:
         await cache_client.set(cache_key, answer, ttl_seconds=settings.exact_cache_ttl_seconds)
         if settings.semantic_cache_preview_enabled or settings.semantic_cache_reuse_enabled:
@@ -1370,13 +1395,23 @@ async def route_request(payload: RouteRequest) -> RouteResponse:
     latency_ms = int((time.perf_counter() - start) * 1000)
     route_reason = route_reason_with_cache_bypass(decision.reason, payload.bypass_cache)
     route_reason = route_reason_with_compression(route_reason, compression)
+    if answer_truncated:
+        route_reason = (
+            f"{route_reason}; answer reached "
+            f"max_completion_tokens={payload.max_completion_tokens}"
+        )
     if fallback_skip_reason is not None:
         route_reason = f"{route_reason}; {fallback_skip_reason}"
     if not response_cached:
-        route_reason = (
-            f"{route_reason}; response not cached because quality score "
-            f"{quality_score} is below target {payload.quality_target}"
-        )
+        if answer_truncated:
+            route_reason = (
+                f"{route_reason}; response not cached because the answer is truncated"
+            )
+        else:
+            route_reason = (
+                f"{route_reason}; response not cached because quality score "
+                f"{quality_score} is below target {payload.quality_target}"
+            )
     route_reason = f"{route_reason}; latency_ms={latency_ms}"
     prompt_tokens = sum_nullable_int([call.prompt_tokens for call in call_logs])
     completion_tokens = sum_nullable_int([call.completion_tokens for call in call_logs])
@@ -1442,6 +1477,9 @@ async def route_request(payload: RouteRequest) -> RouteResponse:
         completion_tokens=completion_tokens,
         total_tokens=total_tokens_from_calls(call_logs),
         estimated_cost_usd=float(estimated_cost_usd) if estimated_cost_usd is not None else None,
+        finish_reason=result.finish_reason,
+        answer_truncated=answer_truncated,
+        max_completion_tokens=payload.max_completion_tokens,
         prompt_compressed=compression.compressed,
         original_prompt_words=compression.original_words,
         compressed_prompt_words=compression.compressed_words,

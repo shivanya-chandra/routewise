@@ -132,10 +132,12 @@ PLAYGROUND_HTML = """<!doctype html>
     .stat-label { color: var(--muted); font-size: 11px; font-weight: 750; text-transform: uppercase; }
     .stat-value { margin-top: 3px; font-size: 15px; font-weight: 800; overflow-wrap: anywhere; }
     .answer { min-height: 130px; padding: 18px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 15px; line-height: 1.65; }
+    .limit-note { margin: 0 16px 14px; border-left: 3px solid var(--amber); background: var(--amber-soft); padding: 10px 12px; color: #6f4b09; font-size: 13px; line-height: 1.45; }
     .result-flags { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 16px 14px; }
     .flag { border-radius: 999px; padding: 4px 9px; background: #edf0ee; color: #46534c; font-size: 11px; font-weight: 750; }
     .flag.cache { background: var(--green-soft); color: var(--green-dark); }
     .flag.cost { background: var(--amber-soft); color: var(--amber); }
+    .flag.warning { background: #ffdfd8; color: #8c2417; }
     .reason { border-top: 1px solid var(--line); padding: 12px 16px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
     .history { margin-top: 16px; }
     .table-wrap { overflow-x: auto; }
@@ -267,10 +269,10 @@ PLAYGROUND_HTML = """<!doctype html>
               <div>
                 <label for="output-limit">Maximum answer tokens</label>
                 <select id="output-limit">
-                  <option value="32">32 - fastest</option>
-                  <option value="64" selected>64 - quick</option>
+                  <option value="32">32 - preview</option>
+                  <option value="64">64 - concise</option>
                   <option value="128">128 - standard</option>
-                  <option value="256">256 - detailed</option>
+                  <option value="256" selected>256 - detailed</option>
                   <option value="512">512 - long</option>
                 </select>
               </div>
@@ -500,15 +502,23 @@ PLAYGROUND_HTML = """<!doctype html>
 
     function renderResponse(data) {
       const cacheType = data.semantic_cache_hit ? 'semantic cache' : data.cache_hit ? 'exact cache' : 'fresh model call';
-      byId('response-status').textContent = 'Complete';
+      const limitNote = data.answer_truncated
+        ? `<div class="limit-note">This answer reached the ${escapeHtml(data.max_completion_tokens ?? '')}-token limit before it finished. Choose a larger Maximum answer tokens setting and run the prompt again.</div>`
+        : '';
+      const truncationFlag = data.answer_truncated
+        ? '<span class="flag warning">answer limit reached</span>'
+        : '';
+      byId('response-status').textContent = data.answer_truncated ? 'Limit reached' : 'Complete';
       byId('response-content').className = '';
       byId('response-content').innerHTML = `
         <div class="answer">${escapeHtml(data.answer)}</div>
+        ${limitNote}
         <div class="result-flags">
           <span class="flag">${escapeHtml(data.final_model)}</span>
           <span class="flag cache">${escapeHtml(cacheType)}</span>
           <span class="flag cost">${escapeHtml(formatMoney(data.estimated_cost_usd))}</span>
           <span class="flag">${escapeHtml(data.quality_label || 'not scored')}</span>
+          ${truncationFlag}
         </div>
         <div class="result-stats">
           <div class="result-stat"><div class="stat-label">Prompt tokens</div><div class="stat-value">${data.prompt_tokens ?? '-'}</div></div>

@@ -65,3 +65,27 @@ def test_hydration_skips_invalid_prompt(monkeypatch) -> None:
 
     assert count == 0
     assert asyncio.run(cache.get("bad")) is None
+
+
+def test_hydration_skips_legacy_cache_hash(monkeypatch) -> None:
+    cache = MemoryExactCache()
+    messages = [{"role": "user", "content": "Do not restore a legacy entry."}]
+    semantic_cache_index.entries.clear()
+    monkeypatch.setattr("app.main.cache_client", cache)
+
+    count = asyncio.run(
+        hydrate_cache_entries(
+            [
+                CacheEntryLog(
+                    input_hash="legacy-hash",
+                    prompt='[{"content":"Do not restore a legacy entry.","role":"user"}]',
+                    response="Potentially incomplete legacy response.",
+                    model="ollama/llama3.2",
+                )
+            ]
+        )
+    )
+
+    assert count == 0
+    assert asyncio.run(cache.get("legacy-hash")) is None
+    assert request_hash(messages) not in semantic_cache_index.entries

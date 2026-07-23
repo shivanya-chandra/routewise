@@ -132,12 +132,12 @@ curl --max-time 70 -X POST http://localhost:8080/route \
     "routing_policy": "balanced",
     "allow_semantic_cache": false,
     "bypass_cache": false,
-    "max_completion_tokens": 64,
+    "max_completion_tokens": 256,
     "max_estimated_cost_usd": 0.01
   }' | python -m json.tool
 ```
 
-Important response fields include the selected/final model, cache type, whether the fresh response was cached, routing reason, policy, fallback decision, quality label, tokens, estimated cost, latency, and compression result.
+Important response fields include the selected/final model, cache type, whether the fresh response was cached, routing reason, policy, fallback decision, quality label, tokens, estimated cost, latency, and compression result. `finish_reason`, `answer_truncated`, and `max_completion_tokens` distinguish a complete response from one that reached its output limit.
 
 If `ROUTEWISE_API_KEY` is configured, add:
 
@@ -148,6 +148,8 @@ If `ROUTEWISE_API_KEY` is configured, add:
 ## Cache Behavior
 
 Exact cache reuse is automatic unless `bypass_cache` is `true`. The key is based on the original normalized message list, so prompt compression does not change cache identity.
+
+The cache fingerprint includes a schema version. Version 2 was introduced with finish-reason tracking so older entries that may contain unrecognized truncated answers are not restored after an upgrade.
 
 Semantic cache reuse is deliberately stricter:
 
@@ -175,7 +177,7 @@ When request logging is enabled, successful model answers are upserted into `cac
 
 ## Cost and Fallback Safety
 
-`POST /route/estimate` predicts prompt/completion tokens and estimated cost without calling a model. The estimate uses the request's `max_completion_tokens`, so the playground's answer-length control affects both the estimate and the real provider limit. `max_estimated_cost_usd` applies the same estimate before a real call.
+`POST /route/estimate` predicts prompt/completion tokens and estimated cost without calling a model. The estimate uses the request's `max_completion_tokens`, so the playground's answer-length control affects both the estimate and the real provider limit. RouteWise also gives the provider a short budget instruction asking it to finish within that allowance; those instruction tokens are included in the estimate. `max_estimated_cost_usd` applies the same estimate before a real call.
 
 - known over-budget first calls return HTTP 402 before provider usage
 - unknown prices report `budget_status: "unknown"` and do not create a false block
@@ -184,6 +186,7 @@ When request logging is enabled, successful model answers are upserted into `cac
 - `max_cost_tier` also caps fallback, so a small-tier request never jumps to a paid frontier model
 - a failed fallback returns the usable first answer and records the failed attempt
 - fresh answers enter cache only when they meet the request's quality target
+- answers stopped by the output-token limit are labeled `truncated`, are not cached, and tell the caller to raise `max_completion_tokens`
 - local Ollama models use a built-in zero-dollar price
 - GPT-4o mini and GPT-4o have built-in standard prices
 - custom or updated paid prices can override built-ins through `MODEL_PRICES_JSON`
@@ -198,7 +201,7 @@ Values are input and output dollars per 1,000 tokens. The GPT defaults come from
 
 Pricing and availability are deliberately separate. RouteWise can show a useful estimate for a paid model without spending money, but a live OpenAI request requires `OPENAI_API_KEY`. The playground labels unavailable tiers and stops immediately with a setup message instead of waiting for a provider timeout.
 
-Local Ollama latency depends on model loading, context size, available unified memory, and answer length. `scripts/dev_start.sh` warms the configured local model, API requests keep it loaded for `OLLAMA_KEEP_ALIVE`, `OLLAMA_CONTEXT_LENGTH` avoids an unnecessarily large local context, and `max_completion_tokens` limits generation work. A cold first request can still take longer than later warm requests.
+Local Ollama latency depends on model loading, context size, available unified memory, and answer length. `scripts/dev_start.sh` warms the configured local model, API requests keep it loaded for `OLLAMA_KEEP_ALIVE`, `OLLAMA_CONTEXT_LENGTH` avoids an unnecessarily large local context, and `max_completion_tokens` limits generation work. The playground defaults to 256 answer tokens; 32, 64, or 128 can trade detail for speed, while 512 suits longer explanations. A cold first request can still take longer than later warm requests.
 
 ## API Surface
 
@@ -287,7 +290,7 @@ All settings use environment variables and can be placed in `.env`.
 | `OLLAMA_CONTEXT_LENGTH` | `2048` | Ollama context window used per local request; lower values use less memory. |
 | `READINESS_TIMEOUT_SECONDS` | `3` | Per-dependency readiness timeout. |
 | `MODEL_PRICES_JSON` | empty | Optional paid-model price overrides. |
-| `PREFLIGHT_DEFAULT_COMPLETION_TOKENS` | `64` | Fallback completion limit for internal model calls. |
+| `PREFLIGHT_DEFAULT_COMPLETION_TOKENS` | `256` | Fallback completion limit for internal model calls. |
 | `EXACT_CACHE_TTL_SECONDS` | `86400` | Exact response lifetime in seconds. |
 | `SEMANTIC_CACHE_PREVIEW_ENABLED` | `true` | Builds and queries the local similarity index. |
 | `SEMANTIC_CACHE_SIMILARITY_THRESHOLD` | `0.80` | Advisory candidate threshold. |
@@ -313,7 +316,7 @@ python -m pytest -q
 Current expected result:
 
 ```text
-123 passed
+128 passed
 ```
 
 The suite covers cache keys and expiry, semantic scoring/reuse/hydration, all routing policies, prompt compression, quality/fallback, provider availability and errors, built-in and overridden prices, output limits, cost and budget checks, database mapping, user profiles, history/metrics/report builders, diagnostics, readiness, authentication, throttling, request IDs, validation limits, playground/dashboard delivery, and end-to-end route behavior.

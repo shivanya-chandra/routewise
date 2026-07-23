@@ -43,12 +43,12 @@ Then:
 3. Choose balanced, cost-first, or quality-first routing.
 4. Set the quality target.
 5. Optionally set a dollar cost limit.
-6. Choose a maximum answer length. Shorter limits are usually faster and cheaper; longer limits allow more detail.
+6. Choose a maximum answer length. The page defaults to 256 tokens so normal explanations have room to finish. A 32, 64, or 128 token limit is faster but less detailed; 512 tokens suits longer answers.
 7. Decide whether similar cached answers are allowed.
 8. Click **Estimate** to see the likely model, tokens, cost, cache state, availability, and budget result without calling a model.
 9. Click **Run prompt** to get the answer.
 
-The response area shows the final model, exact or semantic cache usage, token counts, estimated cost, quality result, fallback count, and RouteWise's reason for the decision.
+The response area shows the final model, exact or semantic cache usage, token counts, estimated cost, quality result, fallback count, and RouteWise's reason for the decision. If the model uses every allowed answer token before finishing, the page says **Limit reached** and asks the user to choose a larger answer limit.
 
 The model menu displays the model, price, and availability for each tier. It is a maximum-model control rather than a command to force one exact model. RouteWise can still choose a cheaper model when that is the sensible route.
 
@@ -83,6 +83,8 @@ A cache is a place that stores work we may reuse.
 RouteWise turns the complete original message list into a stable fingerprint called an input hash. The same messages produce the same hash. Different messages normally produce a different hash.
 
 If that hash already has an answer, RouteWise returns the answer immediately. No AI model is called, token usage is zero for this request, and estimated cost is zero.
+
+RouteWise also versions this fingerprint when cache safety rules change. The truncation fix moved the fingerprint to version 2, so an unfinished answer saved by an older version is not silently loaded again.
 
 ### 3. RouteWise may check semantic cache
 
@@ -133,7 +135,7 @@ The response and database record show whether compression happened, the original
 
 ### 7. RouteWise estimates cost before spending money
 
-Before calling a model, RouteWise estimates prompt tokens and uses the answer-length limit selected by the user as the maximum number of completion tokens.
+Before calling a model, RouteWise estimates prompt tokens and uses the answer-length limit selected by the user as the maximum number of completion tokens. It also tells the model to prioritize finishing within that allowance, and includes that short instruction in the estimate.
 
 For local Ollama, estimated dollar cost is zero. RouteWise includes standard built-in prices for GPT-4o mini and GPT-4o. The owner can override those prices when provider pricing or account terms change.
 
@@ -159,6 +161,7 @@ The first quality checker uses simple, explainable categories:
 - `refusal`: the model appears to refuse
 - `needs_input`: the model asks for missing information
 - `short`: the answer may be too thin for a high target
+- `truncated`: the model reached the selected answer-token limit before it finished
 - `complete`: the answer has enough substance for this rule
 - `cache_hit` or `semantic_cache_hit`: an existing answer was reused
 
@@ -172,7 +175,7 @@ Otherwise, RouteWise calls the frontier model and counts one fallback.
 
 ### 11. RouteWise stores the result
 
-A fresh answer goes into exact cache and the semantic index only when it meets the request's quality target. A weak answer returned because fallback was unavailable is not saved for automatic reuse.
+A fresh answer goes into exact cache and the semantic index only when it meets the request's quality target. A weak answer returned because fallback was unavailable is not saved for automatic reuse. A truncated answer is also never cached, even if it contains enough words to look complete, because RouteWise should not repeatedly serve an unfinished response.
 
 When database logging is on, RouteWise also saves the answer and original messages in PostgreSQL. When the API restarts, it loads recent saved entries back into memory. That is why cache knowledge can survive a restart even when the fast cache itself uses memory.
 
@@ -188,6 +191,7 @@ The final response contains the answer and a record of what happened:
 - whether fallback happened or was skipped
 - quality score, label, and explanation
 - token counts
+- whether the provider finished normally or reached the answer-token limit
 - estimated cost
 - compression information
 
@@ -302,10 +306,10 @@ python -m pytest -q
 The current expected result is:
 
 ```text
-123 passed
+128 passed
 ```
 
-That means 123 automated scenarios behaved as expected. The tests include small functions, profile management, web-page delivery, API behavior, security controls, semantic reuse, restart hydration, budget blocking, fallback, model pricing and availability, Ollama output limits, provider errors, metrics, reporting, and complete route flows.
+That means 128 automated scenarios behaved as expected. The tests include small functions, profile management, web-page delivery, API behavior, security controls, semantic reuse, restart hydration, budget blocking, fallback, model pricing and availability, Ollama output limits and truncation handling, provider errors, metrics, reporting, and complete route flows.
 
 Passing tests do not mean every future provider and deployment can never fail. They mean the behavior RouteWise owns is repeatable and protected against known regressions.
 

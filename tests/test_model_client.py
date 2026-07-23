@@ -1,6 +1,18 @@
 import asyncio
 
-from app.core.model_client import call_ollama
+from app.core.model_client import call_ollama, messages_with_completion_budget
+
+
+def test_completion_budget_instruction_precedes_messages() -> None:
+    messages = [{"role": "user", "content": "Explain routing in five points."}]
+
+    prepared = messages_with_completion_budget(messages, 256)
+
+    assert prepared[0]["role"] == "system"
+    assert "no more than 140 words" in prepared[0]["content"]
+    assert "within 256 generated tokens" in prepared[0]["content"]
+    assert "finish every requested point" in prepared[0]["content"]
+    assert prepared[1:] == messages
 
 
 def test_call_ollama_sends_answer_limit_and_keep_alive(monkeypatch) -> None:
@@ -14,6 +26,7 @@ def test_call_ollama_sends_answer_limit_and_keep_alive(monkeypatch) -> None:
             "message": {"content": "Hello!"},
             "prompt_eval_count": 8,
             "eval_count": 3,
+            "done_reason": "length",
         }
 
     monkeypatch.setattr("app.core.model_client.post_ollama_chat", fake_post)
@@ -34,3 +47,4 @@ def test_call_ollama_sends_answer_limit_and_keep_alive(monkeypatch) -> None:
     assert captured["payload"]["options"]["num_ctx"] == 2048
     assert result.answer == "Hello!"
     assert result.total_tokens == 11
+    assert result.finish_reason == "length"

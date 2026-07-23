@@ -181,3 +181,48 @@ def test_quality_first_policy_is_visible_in_route_result(monkeypatch) -> None:
     assert called_models == ["gpt-4o-mini"]
     assert response.routing_policy == "quality_first"
     assert "routing policy=quality_first" in response.route_reason
+
+
+def test_truncated_answer_is_reported_and_not_cached(monkeypatch) -> None:
+    fake_cache = FakeCache()
+    called_models: list[str] = []
+
+    async def fake_call(
+        request_id, model, messages, call_logs, max_completion_tokens
+    ):
+        called_models.append(model)
+        result = ModelResult(
+            "This answer has enough words to fool a simple length-based quality "
+            "check, but it ends abruptly because the model reached its output",
+            20,
+            64,
+            84,
+            {},
+            finish_reason="length",
+        )
+        append_success(call_logs, request_id, model, result)
+        return result
+
+    monkeypatch.setattr("app.main.cache_client", fake_cache)
+    monkeypatch.setattr("app.main.settings.request_logging_enabled", False)
+    monkeypatch.setattr("app.main.call_model_with_logging", fake_call)
+
+    response = asyncio.run(
+        route_request(
+            payload(
+                max_cost_tier="small",
+                max_completion_tokens=64,
+            )
+        )
+    )
+
+    assert called_models == ["ollama/llama3.2"]
+    assert response.answer_truncated is True
+    assert response.finish_reason == "length"
+    assert response.max_completion_tokens == 64
+    assert response.quality_label == "truncated"
+    assert response.response_cached is False
+    assert response.fallback_skipped is True
+    assert fake_cache.values == {}
+    assert "answer reached max_completion_tokens=64" in response.route_reason
+    assert "response not cached because the answer is truncated" in response.route_reason

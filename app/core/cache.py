@@ -7,8 +7,15 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 
+CACHE_KEY_VERSION = 2
+
+
 def request_hash(messages: list[dict[str, Any]]) -> str:
-    normalized = json.dumps(messages, sort_keys=True, separators=(",", ":"))
+    normalized = json.dumps(
+        {"version": CACHE_KEY_VERSION, "messages": messages},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 

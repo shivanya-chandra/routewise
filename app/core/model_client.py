@@ -15,12 +15,27 @@ class ModelResult:
     completion_tokens: int | None
     total_tokens: int | None
     raw: Any
+    finish_reason: str | None = None
 
 
 def ollama_model_name(model: str) -> str | None:
     if not model.startswith("ollama/"):
         return None
     return model.split("/", 1)[1]
+
+
+def messages_with_completion_budget(
+    messages: list[dict[str, str]],
+    max_completion_tokens: int,
+) -> list[dict[str, str]]:
+    word_budget = max(8, int(max_completion_tokens * 0.55))
+    instruction = (
+        f"Hard requirement: complete your entire answer in no more than {word_budget} "
+        f"words and within {max_completion_tokens} generated tokens. Be concise, "
+        "finish every requested point, and end cleanly. Omit extra detail before "
+        "exceeding either limit."
+    )
+    return [{"role": "system", "content": instruction}, *messages]
 
 
 async def call_ollama(
@@ -64,6 +79,7 @@ async def call_ollama(
         completion_tokens=completion_tokens,
         total_tokens=total_tokens,
         raw=data,
+        finish_reason=data.get("done_reason"),
     )
 
 
@@ -127,7 +143,8 @@ async def call_model(
         messages=messages,
         max_tokens=max_completion_tokens or settings.preflight_default_completion_tokens,
     )
-    answer = response.choices[0].message.content or ""
+    choice = response.choices[0]
+    answer = choice.message.content or ""
     usage = getattr(response, "usage", None)
 
     return ModelResult(
@@ -136,4 +153,5 @@ async def call_model(
         completion_tokens=getattr(usage, "completion_tokens", None) if usage else None,
         total_tokens=getattr(usage, "total_tokens", None) if usage else None,
         raw=response,
+        finish_reason=getattr(choice, "finish_reason", None),
     )

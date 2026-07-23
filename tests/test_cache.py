@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 
 from app.core.cache import (
     MemoryExactCache,
@@ -21,6 +22,15 @@ def test_request_hash_changes_when_content_changes() -> None:
     second = [{"role": "user", "content": "Explain inheritance."}]
 
     assert request_hash(first) != request_hash(second)
+
+
+def test_request_hash_includes_cache_schema_version() -> None:
+    messages = [{"role": "user", "content": "Explain polymorphism."}]
+    legacy_normalized = '[{"content":"Explain polymorphism.","role":"user"}]'
+
+    assert request_hash(messages) != hashlib.sha256(
+        legacy_normalized.encode("utf-8")
+    ).hexdigest()
 
 
 def test_cached_prompt_serialization_round_trips() -> None:

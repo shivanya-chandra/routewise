@@ -28,6 +28,18 @@ def test_quality_assessment_detects_needs_input_answer() -> None:
     assert assessment.label == "needs_input"
 
 
+def test_truncated_answer_is_not_mistaken_for_complete_answer() -> None:
+    assessment = assess_answer_quality(
+        "This answer contains enough words to look complete to the normal quality "
+        "heuristic, but the provider stopped generating it at the configured limit.",
+        truncated=True,
+    )
+
+    assert assessment.score == 0.30
+    assert assessment.label == "truncated"
+    assert "output-token limit" in assessment.reason
+
+
 def test_reasonable_answer_scores_above_default_threshold() -> None:
     answer = (
         "A routing gateway can reduce cost by checking cache first, selecting a "

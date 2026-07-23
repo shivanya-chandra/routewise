@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     readiness_timeout_seconds: float = 3.0
     model_prices_json: str = ""
     openai_api_key: str = ""
-    preflight_default_completion_tokens: int = 64
+    preflight_default_completion_tokens: int = 256
 
     exact_cache_ttl_seconds: int = 86400
     semantic_cache_preview_enabled: bool = True
