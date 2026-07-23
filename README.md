@@ -73,7 +73,7 @@ cp .env.example .env
 ./scripts/dev_start.sh
 ```
 
-The helper checks Docker with a 15-second timeout, starts PostgreSQL, creates or updates tables, checks Ollama, warms the configured local model, and starts the API on port 8080.
+The helper checks the Docker server version with a 15-second timeout, starts PostgreSQL, creates or updates tables, checks Ollama, warms the configured local model, and starts the API on port 8080. It uses this narrow daemon probe because `docker info` can be slow even when the containers needed by RouteWise are healthy.
 
 Open another terminal:
 

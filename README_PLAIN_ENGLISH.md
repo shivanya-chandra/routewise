@@ -281,7 +281,7 @@ source .venv/bin/activate
 
 The startup helper avoids the problems we encountered earlier:
 
-- it checks whether Docker is actually ready instead of hanging forever
+- it checks the Docker server with a small, time-limited command instead of the slower `docker info`
 - it waits for PostgreSQL
 - it creates and updates the database tables
 - it checks whether Ollama is reachable

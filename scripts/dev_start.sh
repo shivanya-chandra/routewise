@@ -31,7 +31,7 @@ import subprocess
 
 try:
     subprocess.run(
-        ["docker", "info"],
+        ["docker", "version", "--format", "{{.Server.Version}}"],
         check=True,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
