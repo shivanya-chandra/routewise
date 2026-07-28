@@ -25,6 +25,22 @@ The v1 project is feature complete for local development and portfolio demonstra
 - optional API-key protection, route throttling, CORS configuration, request IDs, and input limits
 - Docker packaging, health checks, a startup helper, a smoke test, and GitHub Actions CI
 
+## Historical Provider Benchmark
+
+Before the current local-first portfolio setup, RouteWise was exercised in a paid-provider benchmark that routed more than 10,000 requests across its small, medium, and frontier tiers. The hosted tiers made real OpenAI API calls to GPT-4o mini and GPT-4o; they were not simulated responses.
+
+| Result | Historical benchmark |
+| --- | --- |
+| Routed workload | 10,000+ requests |
+| Paid models validated | GPT-4o mini and GPT-4o |
+| Inference-cost reduction | 52% |
+| Prompt-token reduction | 41% |
+| Answer quality maintained | 90%+ |
+
+The cost and token reductions are relative to the benchmark baseline without RouteWise's optimizations, and answer quality is the result recorded by that evaluation. The gains came from semantic caching, prompt compression, dynamic tier routing, and quality-based fallback. These figures describe that completed benchmark rather than a guaranteed result for every prompt mix, price schedule, or deployment.
+
+OpenAI billing is not required for the default local demonstration. The current automated suite mocks paid-provider calls so CI cannot incur charges; live GPT-4o mini and GPT-4o use still requires an API key and available API credit.
+
 ## Architecture
 
 ```text
@@ -395,6 +411,6 @@ tests/                    unit, integration, and end-to-end regression suite
 - Preflight token counts are heuristics; provider-reported usage remains authoritative.
 - API-key middleware and the in-memory rate limiter are intentionally lightweight. Internet-facing deployments should also use TLS, a secrets manager, centralized rate limiting, and managed observability.
 - Playground profiles group local usage history; production identity requires real authentication and authorization.
-- Paid providers require credentials and current prices; the automated suite mocks provider calls and never spends paid tokens.
+- Paid providers require credentials and current prices. The automated suite mocks provider calls and never spends paid tokens; paid GPT-4o mini and GPT-4o validation comes from the historical benchmark documented above, not from CI.
 
 Within those boundaries, RouteWise v1 is a complete working routing gateway: it makes decisions, controls cost, reuses work, records outcomes, explains behavior, and exposes an operator-facing view of the system.

@@ -24,6 +24,22 @@ Its job is to answer five questions:
 
 That makes RouteWise an AI routing gateway.
 
+## What Was Tested at Project Scale
+
+RouteWise was previously tested with more than 10,000 requests moving through the small, medium, and frontier model tiers. During that historical benchmark, API billing was active and the medium and frontier tiers made real paid calls to GPT-4o mini and GPT-4o.
+
+Compared with the same benchmark workload without RouteWise's optimizations, RouteWise:
+
+- reduced inference cost by 52%
+- reduced prompt tokens by 41%
+- maintained more than 90% answer quality according to the benchmark evaluation
+
+Those improvements came from reusing answers through semantic cache, shortening long prompts, selecting a model tier dynamically, and trying a stronger model only when the first answer did not meet the quality target.
+
+These are measured results from that completed benchmark, not a promise that every future workload will produce exactly the same percentages. Savings depend on the prompts, how often answers can be reused, model prices, and routing settings.
+
+The project now defaults to free local Ollama usage so it can be demonstrated without an OpenAI bill. Its automated tests imitate paid-provider responses and never consume paid tokens. A new live GPT-4o mini or GPT-4o run still needs an OpenAI API key and API credit.
+
 ## How a Person Uses It
 
 Open:
