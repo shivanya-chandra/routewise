@@ -48,7 +48,7 @@ Then:
 8. Click **Estimate** to see the likely model, tokens, cost, cache state, availability, and budget result without calling a model.
 9. Click **Run prompt** to get the answer.
 
-The response area shows the final model, exact or semantic cache usage, token counts, estimated cost, quality result, fallback count, and RouteWise's reason for the decision. If the model uses every allowed answer token before finishing, the page says **Limit reached** and asks the user to choose a larger answer limit.
+The response area safely formats headings, paragraphs, numbered steps, bullet lists, bold text, quotes, and code. It also shows the final model, exact or semantic cache usage, token counts, estimated cost, quality result, fallback count, and RouteWise's reason for the decision. If the model uses every allowed answer token before finishing, the page says **Limit reached** and asks the user to choose a larger answer limit.
 
 The model menu displays the model, price, and availability for each tier. It is a maximum-model control rather than a command to force one exact model. RouteWise can still choose a cheaper model when that is the sensible route.
 
@@ -144,6 +144,8 @@ The caller can set a maximum estimated cost. If a known price exceeds that budge
 If the model price is unknown, RouteWise says the budget result is unknown. It does not pretend the request is free, and it does not block based on an invented number.
 
 Knowing a model's price does not mean RouteWise has permission to call it. OpenAI models need `OPENAI_API_KEY`. Without that key, the page still shows their estimated cost, labels them unavailable, and stops immediately with a setup message. It does not make the user wait for a request that cannot succeed.
+
+Create the key in the OpenAI Platform, then run `./scripts/configure_openai_key.sh` from the RouteWise folder. The helper hides the key while it is pasted and stores it only in the ignored local `.env` file. Restart RouteWise afterward. A ChatGPT subscription does not pay for API calls; OpenAI API billing is managed separately.
 
 ### 8. RouteWise calls the chosen model
 
@@ -306,10 +308,10 @@ python -m pytest -q
 The current expected result is:
 
 ```text
-128 passed
+131 passed
 ```
 
-That means 128 automated scenarios behaved as expected. The tests include small functions, profile management, web-page delivery, API behavior, security controls, semantic reuse, restart hydration, budget blocking, fallback, model pricing and availability, Ollama output limits and truncation handling, provider errors, metrics, reporting, and complete route flows.
+That means 131 automated scenarios behaved as expected. The tests include small functions, profile management, web-page delivery, safe Markdown formatting, API behavior, security controls, semantic reuse, restart hydration, budget blocking, fallback, model pricing and availability, Ollama output limits and truncation handling, provider errors, metrics, reporting, and complete route flows.
 
 Passing tests do not mean every future provider and deployment can never fail. They mean the behavior RouteWise owns is repeatable and protected against known regressions.
 

@@ -131,7 +131,20 @@ PLAYGROUND_HTML = """<!doctype html>
     .estimate-item:nth-last-child(-n+2) { border-bottom: 0; }
     .stat-label { color: var(--muted); font-size: 11px; font-weight: 750; text-transform: uppercase; }
     .stat-value { margin-top: 3px; font-size: 15px; font-weight: 800; overflow-wrap: anywhere; }
-    .answer { min-height: 130px; padding: 18px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 15px; line-height: 1.65; }
+    .answer { min-height: 130px; padding: 18px; overflow-wrap: anywhere; font-size: 15px; line-height: 1.65; }
+    .answer > :first-child { margin-top: 0; }
+    .answer > :last-child { margin-bottom: 0; }
+    .answer p { margin: 0 0 12px; }
+    .answer h1, .answer h2, .answer h3, .answer h4 { margin: 20px 0 8px; color: #1e2d25; font-size: 16px; line-height: 1.35; letter-spacing: 0; }
+    .answer h1 { font-size: 20px; }
+    .answer h2 { font-size: 18px; }
+    .answer ul, .answer ol { margin: 0 0 14px; padding-left: 24px; }
+    .answer li { margin: 6px 0; padding-left: 3px; }
+    .answer li::marker { color: var(--green-dark); font-weight: 800; }
+    .answer blockquote { margin: 14px 0; border-left: 3px solid var(--green); padding: 3px 0 3px 14px; color: var(--muted); }
+    .answer code { background: #edf0ee; padding: 2px 5px; font-size: 13px; }
+    .answer pre { max-width: 100%; overflow-x: auto; background: #18231d; padding: 14px; color: #eef5f0; font-size: 13px; line-height: 1.5; }
+    .answer pre code { background: transparent; padding: 0; color: inherit; }
     .limit-note { margin: 0 16px 14px; border-left: 3px solid var(--amber); background: var(--amber-soft); padding: 10px 12px; color: #6f4b09; font-size: 13px; line-height: 1.45; }
     .result-flags { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 16px 14px; }
     .flag { border-radius: 999px; padding: 4px 9px; background: #edf0ee; color: #46534c; font-size: 11px; font-weight: 750; }
@@ -511,7 +524,7 @@ PLAYGROUND_HTML = """<!doctype html>
       byId('response-status').textContent = data.answer_truncated ? 'Limit reached' : 'Complete';
       byId('response-content').className = '';
       byId('response-content').innerHTML = `
-        <div class="answer">${escapeHtml(data.answer)}</div>
+        <div class="answer">${data.answer_html || escapeHtml(data.answer)}</div>
         ${limitNote}
         <div class="result-flags">
           <span class="flag">${escapeHtml(data.final_model)}</span>

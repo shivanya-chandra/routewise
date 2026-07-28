@@ -1,6 +1,8 @@
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
+
+from app.core.markdown import render_markdown
 
 
 class ChatMessage(BaseModel):
@@ -79,6 +81,11 @@ class RouteResponse(BaseModel):
     original_prompt_words: int | None = None
     compressed_prompt_words: int | None = None
     compression_ratio: float | None = None
+
+    @computed_field
+    @property
+    def answer_html(self) -> str:
+        return render_markdown(self.answer)
 
 
 class RoutePreviewResponse(BaseModel):

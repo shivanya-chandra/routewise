@@ -201,6 +201,14 @@ Values are input and output dollars per 1,000 tokens. The GPT defaults come from
 
 Pricing and availability are deliberately separate. RouteWise can show a useful estimate for a paid model without spending money, but a live OpenAI request requires `OPENAI_API_KEY`. The playground labels unavailable tiers and stops immediately with a setup message instead of waiting for a provider timeout.
 
+After creating a secret key in the OpenAI Platform, store it without exposing it in shell history:
+
+```bash
+./scripts/configure_openai_key.sh
+```
+
+The helper prompts with hidden input, updates the ignored `.env` file, and restricts that file to the current macOS user. Restart `scripts/dev_start.sh` afterward. API billing is separate from a ChatGPT subscription, so the API organization also needs available billing credit.
+
 Local Ollama latency depends on model loading, context size, available unified memory, and answer length. `scripts/dev_start.sh` warms the configured local model, API requests keep it loaded for `OLLAMA_KEEP_ALIVE`, `OLLAMA_CONTEXT_LENGTH` avoids an unnecessarily large local context, and `max_completion_tokens` limits generation work. The playground defaults to 256 answer tokens; 32, 64, or 128 can trade detail for speed, while 512 suits longer explanations. A cold first request can still take longer than later warm requests.
 
 ## API Surface
@@ -316,10 +324,10 @@ python -m pytest -q
 Current expected result:
 
 ```text
-128 passed
+131 passed
 ```
 
-The suite covers cache keys and expiry, semantic scoring/reuse/hydration, all routing policies, prompt compression, quality/fallback, provider availability and errors, built-in and overridden prices, output limits, cost and budget checks, database mapping, user profiles, history/metrics/report builders, diagnostics, readiness, authentication, throttling, request IDs, validation limits, playground/dashboard delivery, and end-to-end route behavior.
+The suite covers cache keys and expiry, semantic scoring/reuse/hydration, all routing policies, prompt compression, quality/fallback, provider availability and errors, built-in and overridden prices, output limits, cost and budget checks, safe Markdown rendering, database mapping, user profiles, history/metrics/report builders, diagnostics, readiness, authentication, throttling, request IDs, validation limits, playground/dashboard delivery, and end-to-end route behavior.
 
 CI runs compile checks and the full suite on Python 3.12 for pushes and pull requests.
 
