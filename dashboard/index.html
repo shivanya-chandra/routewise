@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="RouteWise operations dashboard">
+  <title>RouteWise Operations</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="shell topbar-inner">
+      <a class="brand" href="../"><span class="brand-mark">R</span><span>RouteWise</span></a>
+      <nav aria-label="Primary"><a href="../">Playground</a><a href="./" aria-current="page">Operations</a><a href="../api/">API</a></nav>
+      <div class="service"><span class="badge ok"><span class="dot"></span>Browser metrics</span><span class="badge blue">Public dev</span></div>
+    </div>
+  </header>
+
+  <main class="shell">
+    <div class="page-head">
+      <div><p class="eyebrow">Operations</p><h1>Routing performance at a glance.</h1><p class="subhead">Metrics are calculated from requests made in this browser. Use the playground to generate routing activity.</p></div>
+      <button id="refresh" type="button">Refresh metrics</button>
+    </div>
+
+    <div class="metric-grid">
+      <article class="metric"><div class="stat-label">Requests routed</div><div class="metric-value" id="requests">0</div><div class="metric-delta">Current browser</div></article>
+      <article class="metric"><div class="stat-label">Estimated spend</div><div class="metric-value" id="spend">$0.0000</div><div class="metric-delta">Across all demo requests</div></article>
+      <article class="metric"><div class="stat-label">Cost avoided</div><div class="metric-value" id="savings">$0.0000</div><div class="metric-delta">Versus maximum allowed tier</div></article>
+      <article class="metric"><div class="stat-label">Average latency</div><div class="metric-value" id="latency">—</div><div class="metric-delta">Simulated provider latency</div></article>
+    </div>
+
+    <div class="dashboard-grid">
+      <section class="panel">
+        <div class="panel-head"><h2>Model distribution</h2><span class="muted small">By routed requests</span></div>
+        <div class="panel-body bar-list" id="distribution"></div>
+      </section>
+      <section class="panel">
+        <div class="panel-head"><h2>Recent decisions</h2><a class="muted small" href="../">Open playground</a></div>
+        <div class="panel-body timeline" id="timeline"></div>
+      </section>
+    </div>
+
+    <section class="panel table-panel">
+      <div class="panel-head"><h2>Routing ledger</h2><span class="muted small">No server persistence</span></div>
+      <div class="table-wrap"><table><thead><tr><th>Prompt</th><th>Model</th><th>Tier</th><th>Policy</th><th>Cost</th><th>Latency</th></tr></thead><tbody id="ledger"></tbody></table></div>
+    </section>
+  </main>
+  <script src="../assets/dashboard.js"></script>
+</body>
+</html>

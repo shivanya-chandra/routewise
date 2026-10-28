@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="RouteWise API overview">
+  <title>RouteWise API</title>
+  <link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="shell topbar-inner">
+      <a class="brand" href="../"><span class="brand-mark">R</span><span>RouteWise</span></a>
+      <nav aria-label="Primary"><a href="../">Playground</a><a href="../dashboard/">Operations</a><a href="./" aria-current="page">API</a></nav>
+      <div class="service"><span class="badge blue">Reference</span></div>
+    </div>
+  </header>
+  <main class="shell">
+    <div class="page-head"><div><p class="eyebrow">Developer reference</p><h1>RouteWise API surface.</h1><p class="subhead">The production Python gateway exposes these routes. The hosted companion documents them without exposing a live API key.</p></div></div>
+    <div class="notice"><strong>Local API</strong><span>Run the FastAPI service from the GitHub source to call these endpoints. The private hosted demo only executes client-side routing logic.</span></div>
+    <div class="docs">
+      <aside class="panel toc"><div class="panel-body"><a href="#route">Route</a><a href="#preview">Preview</a><a href="#estimate">Estimate</a><a href="#health">Health</a></div></aside>
+      <div>
+        <section class="panel doc-section" id="route"><div class="panel-head"><div class="endpoint"><span class="method">POST</span><h2>/route</h2></div></div><div class="panel-body"><p>Chooses a model, calls the provider, applies budget and quality policies, and returns the formatted response.</p><pre>curl -X POST http://localhost:8080/route \
+  -H 'Content-Type: application/json' \
+  -H 'X-API-Key: your-key' \
+  -d '{"messages":[{"role":"user","content":"Explain semantic caching"}]}'</pre></div></section>
+        <section class="panel doc-section" id="preview"><div class="panel-head"><div class="endpoint"><span class="method">POST</span><h2>/route/preview</h2></div></div><div class="panel-body"><p>Returns the selected model and routing rationale without making a provider call.</p><pre>{
+  "selected_model": "gpt-4.1-mini",
+  "routing_policy": "balanced",
+  "estimated_complexity": 0.62
+}</pre></div></section>
+        <section class="panel doc-section" id="estimate"><div class="panel-head"><div class="endpoint"><span class="method">POST</span><h2>/route/estimate</h2></div></div><div class="panel-body"><p>Estimates token usage, request cost, and whether the configured budget permits the route.</p></div></section>
+        <section class="panel doc-section" id="health"><div class="panel-head"><div class="endpoint"><span class="method">GET</span><h2>/health</h2></div></div><div class="panel-body"><p>Returns a lightweight process health response for container probes.</p><pre>{ "status": "ok" }</pre></div></section>
+      </div>
+    </div>
+  </main>
+</body>
+</html>

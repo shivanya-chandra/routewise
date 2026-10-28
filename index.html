@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="RouteWise hosted routing playground">
+  <title>RouteWise Playground</title>
+  <link rel="stylesheet" href="./assets/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="shell topbar-inner">
+      <a class="brand" href="./"><span class="brand-mark">R</span><span>RouteWise</span></a>
+      <nav aria-label="Primary">
+        <a href="./" aria-current="page">Playground</a>
+        <a href="./dashboard/">Operations</a>
+        <a href="./api/">API</a>
+      </nav>
+      <div class="service"><span class="badge ok"><span class="dot"></span>Hosted demo</span><span class="badge blue">Public dev</span></div>
+    </div>
+  </header>
+
+  <main class="shell">
+    <div class="page-head">
+      <div>
+        <p class="eyebrow">Intelligent model routing</p>
+        <h1>Route every prompt with intent.</h1>
+        <p class="subhead">Compare cost, quality, and latency before choosing a model. This hosted companion runs a safe in-browser simulation of RouteWise.</p>
+      </div>
+      <button id="clear-session" class="ghost" type="button">Clear session</button>
+    </div>
+
+    <div class="notice"><strong>Demo mode</strong><span>Routing decisions and estimates are real client-side logic; generated answers are illustrative and no prompts leave your browser.</span></div>
+
+    <div class="workspace">
+      <div class="column">
+        <section class="panel">
+          <div class="panel-head"><h2>Prompt</h2><span class="muted small" id="active-session">Local session</span></div>
+          <div class="panel-body">
+            <textarea id="prompt" maxlength="100000" placeholder="Try: Compare three approaches to rate limiting in a distributed API and recommend one." aria-label="Prompt"></textarea>
+            <div class="composer-meta"><span id="word-count">0 words</span><span id="char-count">0 / 100000</span></div>
+            <div class="actions">
+              <button id="estimate" type="button" disabled>Estimate</button>
+              <button id="run" class="primary" type="button" disabled>Run routing demo</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel" aria-live="polite">
+          <div class="panel-head"><h2>Response</h2><span class="muted small" id="response-status">Waiting</span></div>
+          <div id="response-content" class="empty">Enter a prompt to see the selected route.</div>
+        </section>
+      </div>
+
+      <aside class="column side">
+        <section class="panel">
+          <div class="panel-head"><h2>Routing controls</h2></div>
+          <div class="panel-body settings">
+            <div>
+              <label for="tier">Maximum model tier</label>
+              <select id="tier">
+                <option value="small">Small</option>
+                <option value="medium" selected>Medium</option>
+                <option value="frontier">Frontier</option>
+              </select>
+            </div>
+            <div>
+              <label for="provider">Preferred model family</label>
+              <select id="provider">
+                <option value="auto" selected>Auto — let RouteWise decide</option>
+                <option value="qwen">Qwen</option>
+                <option value="openai">OpenAI</option>
+                <option value="local">Local Llama</option>
+              </select>
+            </div>
+            <div class="model-card" id="selected-model"><strong>gpt-4.1-mini</strong><span>Current route candidate</span></div>
+            <div class="field-row">
+              <div>
+                <label for="policy">Routing policy</label>
+                <select id="policy">
+                  <option value="balanced">Balanced</option>
+                  <option value="cost_first">Cost first</option>
+                  <option value="quality_first">Quality first</option>
+                </select>
+              </div>
+              <div>
+                <label for="budget">Cost limit (USD)</label>
+                <input id="budget" type="number" min="0" step="0.000001" placeholder="No limit">
+              </div>
+            </div>
+            <div class="field-row">
+              <div>
+                <label for="quality">Quality target</label>
+                <div class="range-row"><input id="quality" type="range" min="0" max="1" step="0.05" value="0.65"><output id="quality-value">0.65</output></div>
+              </div>
+              <div>
+                <label for="output-limit">Maximum answer tokens</label>
+                <select id="output-limit">
+                  <option value="64">64 — concise</option>
+                  <option value="128">128 — standard</option>
+                  <option value="256" selected>256 — detailed</option>
+                  <option value="512">512 — long</option>
+                </select>
+              </div>
+            </div>
+            <div class="checks">
+              <label class="check"><input id="semantic-cache" type="checkbox" checked> Allow similar cached answers</label>
+              <label class="check"><input id="bypass-cache" type="checkbox"> Force a fresh decision</label>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head"><h2>Cost estimate</h2><span class="muted small" id="estimate-status">Not calculated</span></div>
+          <div id="estimate-content" class="empty">Run an estimate.</div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head"><h2>Demo model catalog</h2></div>
+          <div class="panel-body catalog" id="catalog"></div>
+        </section>
+      </aside>
+    </div>
+
+    <section class="panel table-panel">
+      <div class="panel-head"><h2>Recent session requests</h2><span class="muted small">Stored in this browser only</span></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Prompt</th><th>Route</th><th>Policy</th><th>Est. cost</th><th>Latency</th><th>Time</th></tr></thead>
+          <tbody id="history-body"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="./assets/app.js?v=2"></script>
+</body>
+</html>
